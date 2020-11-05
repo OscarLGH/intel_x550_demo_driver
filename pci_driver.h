@@ -58,7 +58,6 @@ struct pci_driver_model {
 	/* for char dev file */
 	struct cdev cdev;
 	dev_t dev;
-	struct class *class;
 };
 
 /* basic ioctls */
@@ -105,7 +104,7 @@ struct ixgbe_hw {
 	/* for char dev file */
 	struct cdev cdev;
 	dev_t dev;
-	struct class *class;
+	int major, minor;
 	
 	struct ixgbe_tx_queue *tx_desc_ring[128];
 	struct ixgbe_rx_queue *rx_desc_ring[128];
