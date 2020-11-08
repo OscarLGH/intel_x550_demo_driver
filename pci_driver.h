@@ -12,6 +12,7 @@
 #include <asm/cacheflush.h>
 
 #include <linux/dma-mapping.h>
+#include <linux/dma-direct.h>
 
 #include <linux/vfio.h>
 #include <linux/mdev.h>
@@ -71,6 +72,8 @@ extern int pci_driver_model_mdev_init(struct device *dev, const void *ops);
 
 struct ixgbe_tx_queue {
 	union ixgbe_adv_tx_desc *tx_desc_ring;
+	struct page *desc_ring_page;
+	struct page **buffer_page_array;
 	u64 size;
 	u64 tail;
 	u64 head;
@@ -78,6 +81,8 @@ struct ixgbe_tx_queue {
 
 struct ixgbe_rx_queue {
 	union ixgbe_adv_rx_desc *rx_desc_ring;
+	struct page *desc_ring_page;
+	struct page **buffer_page_array;
 	u64 size;
 	u64 tail;
 	u64 head;
@@ -128,3 +133,9 @@ static inline void ixgbe_write_reg(struct ixgbe_hw *hw, u32 reg, u32 value)
 #define IXGBE_WRITE_REG(a, reg, value) ixgbe_write_reg((a), (reg), (value))
 
 #define IXGBE_WRITE_FLUSH(a) ixgbe_read_reg((a), IXGBE_STATUS)
+
+
+#define RING_SIZE 0x1000
+#define MAX_TX_RING 1
+#define MAX_RX_RING 1
+#define DESC_SIZE sizeof(union ixgbe_adv_tx_desc)

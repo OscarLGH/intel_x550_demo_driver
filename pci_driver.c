@@ -16,9 +16,7 @@ static irqreturn_t ixgbe_irq(int irq, void *data)
 {
 	irqreturn_t result = IRQ_HANDLED;//IRQ_NONE
 	struct ixgbe_hw *drv_data = data;
-
-	if (drv_data->efd_ctx)
-		eventfd_signal(drv_data->efd_ctx, 1);
+	printk("IRQ %d", irq);
 
 	schedule_work(&drv_data->irq_wq);
 	return result;
@@ -99,18 +97,74 @@ static long ixgbe_char_ioctl(struct file *file, unsigned int cmd, unsigned long 
 static int ixgbe_char_mmap(struct file *file, struct vm_area_struct *vma)
 {
 	size_t vma_size = vma->vm_end - vma->vm_start;
-	int i = 0;
+	int i, j;
 	long current_offset = 0;
 	long current_size = 0;
-	struct ixgbe_hw *drv_data = file->private_data;
+	struct ixgbe_hw *hw = file->private_data;
 
-	pgprot_noncached(vma->vm_page_prot);
-	if (remap_pfn_range(vma,
-			vma->vm_start,
-			vma->vm_pgoff + pci_resource_start(drv_data->pdev, 0) / PAGE_SIZE,
-			vma_size,
-			vma->vm_page_prot)) {
-		return -EAGAIN;
+	switch (vma->vm_pgoff * PAGE_SIZE) {
+		case 0:
+		pgprot_noncached(vma->vm_page_prot);
+		if (remap_pfn_range(vma,
+				vma->vm_start,
+				vma->vm_pgoff + pci_resource_start(hw->pdev, 0) / PAGE_SIZE,
+				vma_size,
+				vma->vm_page_prot)) {
+			return -EAGAIN;
+		}
+		break;
+		case 0x800000:
+		for (i = 0; i < MAX_TX_RING; i++) {
+			if (remap_pfn_range(vma,
+					vma->vm_start + current_offset,
+					page_to_pfn(hw->tx_desc_ring[i]->desc_ring_page),
+					PAGE_SIZE,
+					vma->vm_page_prot)) {
+				return -EAGAIN;
+			}
+			current_offset += PAGE_SIZE;
+		}
+		break;
+		case 0x880000:
+		for (i = 0; i < MAX_RX_RING; i++) {
+			if (remap_pfn_range(vma,
+					vma->vm_start + current_offset,
+					page_to_pfn(hw->rx_desc_ring[i]->desc_ring_page),
+					PAGE_SIZE,
+					vma->vm_page_prot)) {
+				return -EAGAIN;
+			}
+			current_offset += PAGE_SIZE;
+		}
+		break;
+		case 0x900000:
+		for (i = 0; i < MAX_TX_RING; i++) {
+			for (j = 0; j < RING_SIZE / 16; j++) {
+				if (remap_pfn_range(vma,
+						vma->vm_start + current_offset,
+						page_to_pfn(hw->tx_desc_ring[i]->buffer_page_array[j]),
+						PAGE_SIZE,
+						vma->vm_page_prot)) {
+					return -EAGAIN;
+				}
+				current_offset += PAGE_SIZE;
+			}
+		}
+		break;
+		case 0xa00000:
+		for (i = 0; i < MAX_RX_RING; i++) {
+			for (j = 0; j < RING_SIZE / 16; j++) {
+				if (remap_pfn_range(vma,
+						vma->vm_start + current_offset,
+						page_to_pfn(hw->rx_desc_ring[i]->buffer_page_array[j]),
+						PAGE_SIZE,
+						vma->vm_page_prot)) {
+					return -EAGAIN;
+				}
+				current_offset += PAGE_SIZE;
+			}
+		}
+		break;
 	}
 
 	return 0;
@@ -200,6 +254,9 @@ void irq_work_queue_func(struct work_struct *wq)
 	}
 
 	if (intr_cause & 0xffff) {
+	
+		if (hw->efd_ctx)
+			eventfd_signal(hw->efd_ctx, intr_cause & 0xffff);
 
 		hw->statistic.tx_packets += IXGBE_READ_REG(hw, IXGBE_TXDGPC);
 		hw->statistic.tx_bytes += 
@@ -228,27 +285,11 @@ void irq_work_queue_func(struct work_struct *wq)
 				hw->statistic.tx_bytes
 			);
 		}
-		//printk("TX HEAD:%d, RX HEAD:%d\n", hw->tx_desc_ring[0]->head, hw->rx_desc_ring[0]->head);
-
-/*
-		if (hw->rx_desc_ring[0]->head) {
-			printk("RX DESC:%016x %016x\n",
-	 			hw->rx_desc_ring[0]->rx_desc_ring[hw->rx_desc_ring[0]->head - 1].read.pkt_addr,
-	 			hw->rx_desc_ring[0]->rx_desc_ring[hw->rx_desc_ring[0]->head - 1].read.hdr_addr
-			);
-			hex_dump(
-				(void *)PHYS2VIRT(hw->rx_desc_ring[0]->rx_desc_ring[hw->rx_desc_ring[0]->head - 1].read.pkt_addr), 
-				hw->rx_desc_ring[0]->rx_desc_ring[hw->rx_desc_ring[0]->head - 1].wb.upper.length
-				);
+		if (hw->rx_desc_ring[0]->rx_desc_ring[0].read.pkt_addr) {
+			u32 *virt = page_to_virt(hw->rx_desc_ring[0]->buffer_page_array[0]);
+			printk("%08x %08x %08x %08x", virt[0], virt[1], virt[2], virt[3]);
 		}
-		if (hw->tx_desc_ring[0]->tail) {
-			printk("TX DESC:%016x %08x %08x\n",
-				hw->tx_desc_ring[0]->tx_desc_ring[hw->tx_desc_ring[0]->tail - 1].read.buffer_addr,
-				hw->tx_desc_ring[0]->tx_desc_ring[hw->tx_desc_ring[0]->tail - 1].read.cmd_type_len,
-				hw->tx_desc_ring[0]->tx_desc_ring[hw->tx_desc_ring[0]->tail - 1].read.olinfo_status
-				);
-		}
-*/
+		
 	}
 }
 
@@ -324,26 +365,36 @@ void ixgbe_reset(struct ixgbe_hw *hw)
 	IXGBE_WRITE_REG(hw, IXGBE_IPSTXIDX, 0);
 }
 
-#define RING_SIZE 0x1000
-#define MAX_TX_RING 128
-#define MAX_RX_RING 128
 int tx_init(struct ixgbe_hw *hw)
 {
-	int i;
+	int i, j;
 	u32 ctrl;
-	dma_addr_t ring_phys_addr;
+	void *buffer;
+	dma_addr_t ring_dma_addr;
+	dma_addr_t buffer_dma_addr;
 
 	ctrl = IXGBE_READ_REG(hw, IXGBE_HLREG0);
 	IXGBE_WRITE_REG(hw, IXGBE_HLREG0, ctrl);
 	for (i = 0; i < MAX_TX_RING; i++) {
 		hw->tx_desc_ring[i] = kmalloc(sizeof(*hw->tx_desc_ring[i]), GFP_KERNEL);
 		hw->tx_desc_ring[i]->size = RING_SIZE;
+		hw->tx_desc_ring[i]->buffer_page_array = kmalloc(hw->rx_desc_ring[i]->size / DESC_SIZE * sizeof(struct page *), GFP_KERNEL);
 		hw->tx_desc_ring[i]->head = 0;
 		hw->tx_desc_ring[i]->tail = 0;
-		hw->tx_desc_ring[i]->tx_desc_ring = pci_alloc_consistent(hw->pdev, hw->tx_desc_ring[i]->size, &ring_phys_addr);
+		hw->tx_desc_ring[i]->tx_desc_ring = pci_alloc_consistent(hw->pdev, hw->tx_desc_ring[i]->size, &ring_dma_addr);
+		hw->tx_desc_ring[i]->desc_ring_page = virt_to_page(hw->tx_desc_ring[i]->tx_desc_ring);
+		//printk("tx ring addr:%llx\n", ring_dma_addr);
 		memset(hw->tx_desc_ring[i]->tx_desc_ring, 0, hw->tx_desc_ring[i]->size);
-		IXGBE_WRITE_REG(hw, IXGBE_TDBAL(i), ring_phys_addr);
-		IXGBE_WRITE_REG(hw, IXGBE_TDBAH(i), ring_phys_addr >> 32);
+		
+		for (j = 0; j < hw->tx_desc_ring[i]->size / DESC_SIZE; j++) {
+			buffer = pci_alloc_consistent(hw->pdev, PAGE_SIZE, &buffer_dma_addr);
+			hw->tx_desc_ring[i]->buffer_page_array[j] = virt_to_page(buffer);
+			hw->tx_desc_ring[i]->tx_desc_ring[j].read.buffer_addr = buffer_dma_addr;
+			memset(buffer, 0, hw->rx_desc_ring[i]->size);
+		}
+
+		IXGBE_WRITE_REG(hw, IXGBE_TDBAL(i), ring_dma_addr);
+		IXGBE_WRITE_REG(hw, IXGBE_TDBAH(i), ring_dma_addr >> 32);
 		IXGBE_WRITE_REG(hw, IXGBE_TDLEN(i), hw->tx_desc_ring[i]->size);
 		IXGBE_WRITE_REG(hw, IXGBE_TDH(i), hw->tx_desc_ring[i]->head);
 		IXGBE_WRITE_REG(hw, IXGBE_TXDCTL(i), IXGBE_TXDCTL_ENABLE);
@@ -359,8 +410,8 @@ int rx_init(struct ixgbe_hw *hw)
 	int i, j;
 	u32 ctrl;
 	void *buffer;
-	dma_addr_t ring_phys_addr;
-	dma_addr_t buffer_phys_addr;
+	dma_addr_t ring_dma_addr;
+	dma_addr_t buffer_dma_addr;
 
 	IXGBE_WRITE_REG(hw, IXGBE_CTRL_EXT, 0);
 	IXGBE_WRITE_REG(hw, IXGBE_FCTRL, IXGBE_FCTRL_SBP | IXGBE_FCTRL_MPE | IXGBE_FCTRL_UPE | IXGBE_FCTRL_BAM);
@@ -374,20 +425,23 @@ int rx_init(struct ixgbe_hw *hw)
 		//IXGBE_WRITE_REG(hw, IXGBE_MPSAR_HI(i), 0);
 		hw->rx_desc_ring[i] = kmalloc(sizeof(*hw->rx_desc_ring[i]), GFP_KERNEL);
 		hw->rx_desc_ring[i]->size = RING_SIZE;
-		hw->rx_desc_ring[i]->rx_desc_ring = pci_alloc_consistent(hw->pdev, hw->rx_desc_ring[i]->size, &ring_phys_addr);
+		hw->rx_desc_ring[i]->buffer_page_array = kmalloc(hw->rx_desc_ring[i]->size / DESC_SIZE * sizeof(struct page *), GFP_KERNEL);
+		hw->rx_desc_ring[i]->rx_desc_ring = pci_alloc_consistent(hw->pdev, hw->rx_desc_ring[i]->size, &ring_dma_addr);
+		hw->rx_desc_ring[i]->desc_ring_page = virt_to_page(hw->rx_desc_ring[i]->rx_desc_ring);
 		hw->rx_desc_ring[i]->head = 0;
-		hw->rx_desc_ring[i]->tail = hw->rx_desc_ring[i]->size / sizeof(*hw->rx_desc_ring[i]->rx_desc_ring) - 1;
+		hw->rx_desc_ring[i]->tail = hw->rx_desc_ring[i]->size / DESC_SIZE - 1;
 		memset(hw->rx_desc_ring[i]->rx_desc_ring, 0, hw->rx_desc_ring[i]->size);
 
-		for (j = 0; j < hw->rx_desc_ring[i]->size / sizeof(*hw->rx_desc_ring[i]->rx_desc_ring); j++) {
-			buffer = pci_alloc_consistent(hw->pdev, 4096, &buffer_phys_addr);
-			hw->rx_desc_ring[i]->rx_desc_ring[j].read.pkt_addr = buffer_phys_addr;
+		buffer = pci_alloc_consistent(hw->pdev, PAGE_SIZE, &buffer_dma_addr);
+		for (j = 0; j < hw->rx_desc_ring[i]->size / DESC_SIZE; j++) {
+			//buffer = pci_alloc_consistent(hw->pdev, PAGE_SIZE, &buffer_dma_addr);
+			hw->rx_desc_ring[i]->buffer_page_array[j] = virt_to_page(buffer);
+			hw->rx_desc_ring[i]->rx_desc_ring[j].read.pkt_addr = buffer_dma_addr;
 			memset(buffer, 0, hw->rx_desc_ring[i]->size);
 		}
 
-
-		IXGBE_WRITE_REG(hw, IXGBE_RDBAL(i), ring_phys_addr);
-		IXGBE_WRITE_REG(hw, IXGBE_RDBAH(i), ring_phys_addr >> 32);
+		IXGBE_WRITE_REG(hw, IXGBE_RDBAL(i), ring_dma_addr);
+		IXGBE_WRITE_REG(hw, IXGBE_RDBAH(i), ring_dma_addr >> 32);
 		IXGBE_WRITE_REG(hw, IXGBE_RDLEN(i), hw->rx_desc_ring[i]->size);
 		IXGBE_WRITE_REG(hw, IXGBE_RDH(i), hw->rx_desc_ring[i]->head);
 		IXGBE_WRITE_REG(hw, IXGBE_RXDCTL(i), IXGBE_RXDCTL_ENABLE);
@@ -401,21 +455,14 @@ void packet_transmit(struct ixgbe_hw *hw, void *buffer, int len)
 	int i;
 	int free_queue = -1;
 	union ixgbe_adv_tx_desc *tx_desc;
-/*
-	while (1) {
-		for (i = 0; i < 128; i++) {
-			if (hw->tx_desc_ring[i]->tail == IXGBE_READ_REG(hw, IXGBE_TDH(i))) {
-				free_queue = i;
-				goto done;
-			}
-				
-		}
-	}
-	*/
 	free_queue = 0;
-done:
+	void *tx_buffer_virt;
+
+	tx_buffer_virt = page_to_virt(hw->tx_desc_ring[free_queue]->buffer_page_array[hw->tx_desc_ring[free_queue]->tail]);
 	tx_desc = hw->tx_desc_ring[free_queue]->tx_desc_ring;
-	//tx_desc[hw->tx_desc_ring[free_queue]->tail].read.buffer_addr = VIRT2PHYS(buffer);
+	//tx_desc[hw->tx_desc_ring[free_queue]->tail].read.buffer_addr = buffer_dma_addr;
+	//printk("buffer addr:%llx\n", buffer_phys_addr);
+	memcpy(tx_buffer_virt, buffer, len);
 	tx_desc[hw->tx_desc_ring[free_queue]->tail].read.cmd_type_len = (0xb << 24) | (36 << 16) | len;
 	tx_desc[hw->tx_desc_ring[free_queue]->tail].read.olinfo_status = (0 << 16);
 	hw->tx_desc_ring[free_queue]->tail = (hw->tx_desc_ring[free_queue]->tail + 1) % (hw->tx_desc_ring[free_queue]->size / sizeof(*tx_desc));
@@ -423,6 +470,47 @@ done:
 	IXGBE_WRITE_REG(hw, IXGBE_TDT(free_queue), hw->tx_desc_ring[free_queue]->tail);
 }
 
+void packet_receive(struct ixgbe_hw *hw, long *buffer_phys, int *len)
+{
+	int i;
+	int free_queue = -1;
+	union ixgbe_adv_rx_desc *rx_desc;
+
+	free_queue = 0;
+
+	*buffer_phys = hw->rx_desc_ring[0]->rx_desc_ring[hw->rx_desc_ring[0]->head - 1].read.pkt_addr;
+	*len = hw->rx_desc_ring[0]->rx_desc_ring[hw->rx_desc_ring[0]->head - 1].wb.upper.length;
+}
+
+void test_func(struct ixgbe_hw *hw)
+{
+	int i;
+	u8 *test_buffer = kmalloc(0x1000, GFP_KERNEL);
+	memset(test_buffer, 0x0, 0x1000);
+	u8 arp_packet[] = {
+		 0xff,0xff,0xff,0xff,0xff,0xff,0x00,0x50,0x56,0xc0,0x00,0x01,0x08,0x06,0x00,0x01,
+		 0x08,0x00,0x06,0x04,0x00,0x01,0x00,0x50,0x56,0xc0,0x00,0x01,0xc0,0xa8,0x00,0x01,
+		 0x00,0x00,0x00,0x00,0x00,0x00,0xc0,0xa8,0x00,0x02
+	};
+
+	struct mac_frame {
+		u8 dest_mac[6];
+		u8 src_mac[6];
+		u16 type;
+	} mac_frame = {
+		{0x00,0x0e,0xc6,0xc7,0x2a,0xdd},
+		{0xa0,0x36,0x9f,0xb9,0x8a,0x3a},
+		0x0008
+	};
+	//memcpy(&mac_frame.src_mac, hw->mac_addr, 6);
+
+	memcpy(test_buffer, &mac_frame, sizeof(mac_frame));
+	memcpy(test_buffer + sizeof(mac_frame), arp_packet, sizeof(arp_packet));
+
+	for (i = 0; i < 100; i++) {
+		packet_transmit(hw, test_buffer, sizeof(mac_frame) + sizeof(arp_packet));
+	}
+}
 
 static int ixgbe_probe(struct pci_dev *pdev, const struct pci_device_id *pent)
 {
@@ -502,6 +590,8 @@ static int ixgbe_probe(struct pci_dev *pdev, const struct pci_device_id *pent)
 	IXGBE_WRITE_REG(drv_data, IXGBE_GPIE, IXGBE_GPIE_MSIX_MODE | IXGBE_GPIE_EIAME);
 
 	instance++;
+	
+	test_func(drv_data);
 
 	return 0;
 }
