@@ -139,3 +139,12 @@ static inline void ixgbe_write_reg(struct ixgbe_hw *hw, u32 reg, u32 value)
 #define MAX_TX_RING 1
 #define MAX_RX_RING 1
 #define DESC_SIZE sizeof(union ixgbe_adv_tx_desc)
+
+struct mac_frame_hdr {
+	u8 dst_mac[6];
+	u8 src_mac[6];
+	u16 type;
+};
+
+int packet_transmit(struct ixgbe_hw *hw, void __user *buffer, int len);
+int packet_receive(struct ixgbe_hw *hw, void __user *buffer, int *len);
