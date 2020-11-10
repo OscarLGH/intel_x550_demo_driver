@@ -74,6 +74,7 @@ struct ixgbe_tx_queue {
 	union ixgbe_adv_tx_desc *tx_desc_ring;
 	struct page *desc_ring_page;
 	struct page **buffer_page_array;
+	dma_addr_t *buffer_dma_addr_array;
 	u64 size;
 	u64 tail;
 	u64 head;
@@ -83,6 +84,7 @@ struct ixgbe_rx_queue {
 	union ixgbe_adv_rx_desc *rx_desc_ring;
 	struct page *desc_ring_page;
 	struct page **buffer_page_array;
+	dma_addr_t *buffer_dma_addr_array;
 	u64 size;
 	u64 tail;
 	u64 head;

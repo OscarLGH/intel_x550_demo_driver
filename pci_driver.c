@@ -275,9 +275,11 @@ void irq_work_queue_func(struct work_struct *wq)
 		hw->rx_desc_ring[0]->head = IXGBE_READ_REG(hw, IXGBE_RDH(0));
 		hw->tx_desc_ring[0]->tail = IXGBE_READ_REG(hw, IXGBE_TDT(0));
 		hw->rx_desc_ring[0]->tail = IXGBE_READ_REG(hw, IXGBE_RDT(0));
+		printk("tx head = %d tail = %d\n", hw->tx_desc_ring[0]->head, hw->tx_desc_ring[0]->tail);
+		printk("rx head = %d tail = %d\n", hw->rx_desc_ring[0]->head, hw->rx_desc_ring[0]->tail);
 		if (hw->rx_desc_ring[0]->head == IXGBE_READ_REG(hw, IXGBE_RDT(0))) {
 			//printk("rx ring empty.\n");
-			hw->rx_desc_ring[0]->tail = hw->rx_desc_ring[0]->head + hw->rx_desc_ring[0]->size / DESC_SIZE;
+			hw->rx_desc_ring[0]->tail = (hw->rx_desc_ring[0]->head + hw->rx_desc_ring[0]->size / DESC_SIZE - 1) % (hw->rx_desc_ring[0]->size / DESC_SIZE);
 			IXGBE_WRITE_REG(hw, IXGBE_RDT(0), hw->rx_desc_ring[0]->tail);
 		}
 
@@ -292,8 +294,8 @@ void irq_work_queue_func(struct work_struct *wq)
 				hw->statistic.tx_bytes
 			);
 		}
-		if (hw->rx_desc_ring[0]->tail != 0) {
-			struct mac_frame_hdr *hdr = page_to_virt(hw->rx_desc_ring[0]->buffer_page_array[hw->rx_desc_ring[0]->tail]);
+		if (hw->rx_desc_ring[0]->head != 0) {
+			struct mac_frame_hdr *hdr = page_to_virt(hw->rx_desc_ring[0]->buffer_page_array[hw->rx_desc_ring[0]->head - 1]);
 			printk("[%s] received packet from: %02x:%02x:%02x:%02x:%02x:%02x (dst:%02x:%02x:%02x:%02x:%02x:%02x)",
 				mac_string,
 				hdr->src_mac[0],
@@ -399,7 +401,8 @@ int tx_init(struct ixgbe_hw *hw)
 	for (i = 0; i < MAX_TX_RING; i++) {
 		hw->tx_desc_ring[i] = kmalloc(sizeof(*hw->tx_desc_ring[i]), GFP_KERNEL);
 		hw->tx_desc_ring[i]->size = RING_SIZE;
-		hw->tx_desc_ring[i]->buffer_page_array = kmalloc(hw->rx_desc_ring[i]->size / DESC_SIZE * sizeof(struct page *), GFP_KERNEL);
+		hw->tx_desc_ring[i]->buffer_page_array = kmalloc(hw->tx_desc_ring[i]->size / DESC_SIZE * sizeof(struct page *), GFP_KERNEL);
+		hw->tx_desc_ring[i]->buffer_dma_addr_array = kmalloc(hw->tx_desc_ring[i]->size / DESC_SIZE * sizeof(dma_addr_t), GFP_KERNEL);
 		hw->tx_desc_ring[i]->head = 0;
 		hw->tx_desc_ring[i]->tail = 0;
 		hw->tx_desc_ring[i]->tx_desc_ring = pci_alloc_consistent(hw->pdev, hw->tx_desc_ring[i]->size, &ring_dma_addr);
@@ -410,6 +413,7 @@ int tx_init(struct ixgbe_hw *hw)
 		for (j = 0; j < hw->tx_desc_ring[i]->size / DESC_SIZE; j++) {
 			buffer = pci_alloc_consistent(hw->pdev, PAGE_SIZE, &buffer_dma_addr);
 			hw->tx_desc_ring[i]->buffer_page_array[j] = virt_to_page(buffer);
+			hw->tx_desc_ring[i]->buffer_dma_addr_array[j] = buffer_dma_addr;
 			hw->tx_desc_ring[i]->tx_desc_ring[j].read.buffer_addr = buffer_dma_addr;
 			memset(buffer, 0, hw->rx_desc_ring[i]->size);
 		}
@@ -444,20 +448,24 @@ int rx_init(struct ixgbe_hw *hw)
 		//IXGBE_WRITE_REG(hw, IXGBE_VFTA(i), 0);
 		//IXGBE_WRITE_REG(hw, IXGBE_MPSAR_LO(i), 0);
 		//IXGBE_WRITE_REG(hw, IXGBE_MPSAR_HI(i), 0);
+		IXGBE_WRITE_REG(hw, IXGBE_SRRCTL(i), 0x2 | (0x4 << 8) | (0x1 << 25));
 		hw->rx_desc_ring[i] = kmalloc(sizeof(*hw->rx_desc_ring[i]), GFP_KERNEL);
 		hw->rx_desc_ring[i]->size = RING_SIZE;
 		hw->rx_desc_ring[i]->buffer_page_array = kmalloc(hw->rx_desc_ring[i]->size / DESC_SIZE * sizeof(struct page *), GFP_KERNEL);
+		hw->rx_desc_ring[i]->buffer_dma_addr_array = kmalloc(hw->rx_desc_ring[i]->size / DESC_SIZE * sizeof(dma_addr_t), GFP_KERNEL);
 		hw->rx_desc_ring[i]->rx_desc_ring = pci_alloc_consistent(hw->pdev, hw->rx_desc_ring[i]->size, &ring_dma_addr);
 		hw->rx_desc_ring[i]->desc_ring_page = virt_to_page(hw->rx_desc_ring[i]->rx_desc_ring);
 		hw->rx_desc_ring[i]->head = 0;
 		hw->rx_desc_ring[i]->tail = hw->rx_desc_ring[i]->size / DESC_SIZE - 1;
 		memset(hw->rx_desc_ring[i]->rx_desc_ring, 0, hw->rx_desc_ring[i]->size);
 
-		buffer = pci_alloc_consistent(hw->pdev, PAGE_SIZE, &buffer_dma_addr);
+		//buffer = pci_alloc_consistent(hw->pdev, PAGE_SIZE, &buffer_dma_addr);
 		for (j = 0; j < hw->rx_desc_ring[i]->size / DESC_SIZE; j++) {
-			//buffer = pci_alloc_consistent(hw->pdev, PAGE_SIZE, &buffer_dma_addr);
+			buffer = pci_alloc_consistent(hw->pdev, PAGE_SIZE, &buffer_dma_addr);
 			hw->rx_desc_ring[i]->buffer_page_array[j] = virt_to_page(buffer);
+			hw->rx_desc_ring[i]->buffer_dma_addr_array[j] = buffer_dma_addr;
 			hw->rx_desc_ring[i]->rx_desc_ring[j].read.pkt_addr = buffer_dma_addr;
+			hw->rx_desc_ring[i]->rx_desc_ring[j].read.hdr_addr = buffer_dma_addr + 0x800;
 			memset(buffer, 0, hw->rx_desc_ring[i]->size);
 		}
 
@@ -478,16 +486,18 @@ int packet_transmit(struct ixgbe_hw *hw, void __user *buffer, int len)
 	union ixgbe_adv_tx_desc *tx_desc;
 	free_queue = 0;
 	void *tx_buffer_virt;
+	int last_index;
 
 	tx_buffer_virt = page_to_virt(hw->tx_desc_ring[free_queue]->buffer_page_array[hw->tx_desc_ring[free_queue]->tail]);
 	tx_desc = hw->tx_desc_ring[free_queue]->tx_desc_ring;
 	//memcpy(tx_buffer_virt, buffer, len);
 	copy_from_user(tx_buffer_virt, buffer, len);
-	tx_desc[hw->tx_desc_ring[free_queue]->tail].read.cmd_type_len = (0xb << 24) | (36 << 16) | len;
-	tx_desc[hw->tx_desc_ring[free_queue]->tail].read.olinfo_status = (0 << 16);
-	hw->tx_desc_ring[free_queue]->tail = (hw->tx_desc_ring[free_queue]->tail + 1) % (hw->tx_desc_ring[free_queue]->size / sizeof(*tx_desc));
-
+	tx_desc[hw->tx_desc_ring[free_queue]->tail].read.cmd_type_len = (0x2b << 24) | (0x3 << 20) | len;
+	tx_desc[hw->tx_desc_ring[free_queue]->tail].read.olinfo_status = len << 14;
+	last_index = hw->tx_desc_ring[free_queue]->tail;
+	hw->tx_desc_ring[free_queue]->tail = (hw->tx_desc_ring[free_queue]->tail + 1) % (hw->tx_desc_ring[free_queue]->size / DESC_SIZE);
 	IXGBE_WRITE_REG(hw, IXGBE_TDT(free_queue), hw->tx_desc_ring[free_queue]->tail);
+
 	return 0;
 }
 
@@ -501,10 +511,11 @@ int packet_receive(struct ixgbe_hw *hw, void __user *buffer, int *len)
 
 	for (i = 0; i < MAX_RX_RING; i++) {
 		for (j = 0; j < hw->rx_desc_ring[i]->size / DESC_SIZE; j++) {
-			if (hw->rx_desc_ring[i]->rx_desc_ring[j].wb.upper.status_error) {
-				*len = hw->rx_desc_ring[i]->rx_desc_ring[j].wb.upper.status_error & 0xffff;
+			if (hw->rx_desc_ring[i]->rx_desc_ring[j].wb.upper.status_error & IXGBE_ADVTXD_STAT_DD) {
+				*len = hw->rx_desc_ring[i]->rx_desc_ring[j].wb.upper.length;
 				copy_to_user(buffer, page_to_virt(hw->rx_desc_ring[i]->buffer_page_array[j]), *len);
-				hw->rx_desc_ring[i]->rx_desc_ring[j].wb.upper.status_error = 0;
+				hw->rx_desc_ring[i]->rx_desc_ring[j].read.pkt_addr = hw->rx_desc_ring[i]->buffer_dma_addr_array[j];
+				hw->rx_desc_ring[i]->rx_desc_ring[j].read.hdr_addr = hw->rx_desc_ring[i]->buffer_dma_addr_array[j] + 0x800;
 				goto done;
 			}
 		}

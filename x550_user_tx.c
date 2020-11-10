@@ -14,7 +14,7 @@ struct mac_frame_hdr {
 typedef unsigned int u32;
 int main()
 {
-	int i;
+	int i, j;
 	volatile u32 *bar0;
 	int fd = open("/dev/ixgbe_01:00.01", O_RDWR);
 	bar0 = mmap(NULL, 0x400000, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
@@ -35,19 +35,24 @@ int main()
                 {0xaa,0x55,0x9f,0xb9,0x89,0xbe},
                 0x0008
         };
-
-        srand(time(NULL));
-        i = rand();
-        memcpy(arp_packet + 0, &i, 4);
         
-        memcpy(test_buffer, &mac_frame, sizeof(mac_frame));
-        memcpy(test_buffer + sizeof(mac_frame), arp_packet, sizeof(arp_packet));
-        len = sizeof(mac_frame) + sizeof(arp_packet);
-        printf("==============write===============\n");
-        for (i = 0; i < len; i++) {
-        	printf("%02x ", test_buffer[i]);
-        }
-        printf("\n===================================\n");
-        write(fd, test_buffer, len);
+        while (j < 1) {
+
+		srand(time(NULL));
+		i = rand();
+		memcpy(arp_packet + 0, &i, 4);
+		
+		memcpy(test_buffer, &mac_frame, sizeof(mac_frame));
+		memcpy(test_buffer + sizeof(mac_frame), arp_packet, sizeof(arp_packet));
+		len = sizeof(mac_frame) + sizeof(arp_packet);
+		printf("==============write===============\n");
+		for (i = 0; i < len; i++) {
+			printf("%02x ", test_buffer[i]);
+		}
+		printf("\n===================================\n");
+		write(fd, test_buffer, len);
+	
+		j++;	
+	}
 
 }
