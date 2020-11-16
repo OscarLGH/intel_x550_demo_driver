@@ -1,5 +1,5 @@
-obj-m +=pci_driver_model.o
-pci_driver_model-y += pci_driver.o
+obj-m +=ixgbe_driver.o
+ixgbe_driver-y += x550_driver.o x550_mdev.o
 all:
 	make -C /lib/modules/$(shell uname -r)/build M=$(PWD) modules
 clean:

@@ -14,9 +14,6 @@
 #include <linux/dma-mapping.h>
 #include <linux/dma-direct.h>
 
-#include <linux/vfio.h>
-#include <linux/mdev.h>
-
 #include <linux/eventfd.h>
 #include <linux/workqueue.h>
 

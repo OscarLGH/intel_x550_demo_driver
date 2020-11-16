@@ -1,4 +1,4 @@
-#include "pci_driver.h"
+#include "x550_driver.h"
 
 struct class *ixgbe_class;
 int instance = 0;
@@ -526,6 +526,9 @@ error:
 done:
 	return 0;
 }
+
+extern int x550_mdev_init(struct device *dev, const void *ops);
+
 static int ixgbe_probe(struct pci_dev *pdev, const struct pci_device_id *pent)
 {
 	int ret;
@@ -607,6 +610,7 @@ static int ixgbe_probe(struct pci_dev *pdev, const struct pci_device_id *pent)
 
 	instance++;
 
+	x550_mdev_init(&pdev->dev, NULL);
 	return 0;
 }
 
