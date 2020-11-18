@@ -527,8 +527,6 @@ done:
 	return 0;
 }
 
-extern int x550_mdev_init(struct device *dev, const void *ops);
-
 static int ixgbe_probe(struct pci_dev *pdev, const struct pci_device_id *pent)
 {
 	int ret;
@@ -610,7 +608,7 @@ static int ixgbe_probe(struct pci_dev *pdev, const struct pci_device_id *pent)
 
 	instance++;
 
-	x550_mdev_init(&pdev->dev, NULL);
+	x550_mdev_init(&pdev->dev);
 	return 0;
 }
 
@@ -629,6 +627,7 @@ static void ixgbe_remove(struct pci_dev *pdev)
 	pci_disable_msix(pdev);
 	ixgbe_device_fd_destory(drv_data);
 	
+	x550_mdev_exit(&pdev->dev);
 	kfree(drv_data);
 }
 

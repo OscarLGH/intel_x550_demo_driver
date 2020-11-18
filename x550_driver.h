@@ -147,3 +147,6 @@ struct mac_frame_hdr {
 
 int packet_transmit(struct ixgbe_hw *hw, void __user *buffer, int len);
 int packet_receive(struct ixgbe_hw *hw, void __user *buffer, int *len);
+
+int x550_mdev_init(struct device *dev);
+void x550_mdev_exit(struct device *dev);
