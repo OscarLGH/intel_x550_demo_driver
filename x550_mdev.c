@@ -67,6 +67,9 @@ static int x550_mdev_create_vconfig_space(struct ixgbe_mdev_state *mdev_state)
 	mdev_state->vconfig[0x43] = VIRTIO_PCI_CAP_COMMON_CFG;
 	mdev_state->vconfig[0x44] = 0x04;
 
+	/* intr line */
+	mdev_state->vconfig[0x3c] = 0x30;
+
 	/* intr PIN */
 	mdev_state->vconfig[0x3d] = 0x1;
 	
@@ -100,6 +103,7 @@ static int x550_mdev_create(struct kobject *kobj, struct mdev_device *mdev)
 	if (mdev_state == NULL)
 		return -EINVAL;
 	mdev_state->mdev = mdev;
+	mutex_init(&mdev_state->ops_lock);
 	x550_mdev_create_vconfig_space(mdev_state);
 	mdev_set_drvdata(mdev, mdev_state);
 	
@@ -202,19 +206,23 @@ static int _vring_init(struct ixgbe_mdev_state *mdev_state)
 static int vring_process(struct ixgbe_mdev_state *mdev_state)
 {
 	int i;
+	int len;
+	int queue_size = mdev_state->bar0_virtio_config.host_access.common.queue_size;
 
 	pr_info("mdev_state->vring.avail->idx = %d\n", mdev_state->vring.avail->idx);
-	for (i = mdev_state->vring_avail_last_idx; i < mdev_state->vring.avail->idx; i++) {
+	for (i = mdev_state->vring_avail_last_idx % queue_size; i != mdev_state->vring.avail->idx % queue_size; i = (i + 1) % queue_size) {
 		struct vring_desc *desc_ptr = &mdev_state->vring.desc[mdev_state->vring.avail->ring[i]];
 		pr_info("avail ring idx = %d, ring = %d", i, mdev_state->vring.avail->ring[i]);
+		len = 0;
 		while (1) {
 			pr_info("vring desc: addr = 0x%llx len = %d, flags = %x, next = %x\n", desc_ptr->addr, desc_ptr->len, desc_ptr->flags, desc_ptr->next);
+			len += desc_ptr->len;
 			if (desc_ptr->addr != 0) {
 				struct virtio_blk_req *blk_req = get_guest_access_ptr(mdev_state->kvm, desc_ptr->addr);
 				if (desc_ptr->flags == 1) {
 					pr_info("blk request:type = %x sector = %llx status = %x\n", blk_req->type, blk_req->sector, blk_req->status);
 				} else if (desc_ptr->flags == 3) {
-					memset(get_guest_access_ptr(mdev_state->kvm, desc_ptr->addr), 0, desc_ptr->len);
+					memset(get_guest_access_ptr(mdev_state->kvm, desc_ptr->addr), 0x66, desc_ptr->len);
 				} else {
 					*(u8 *)get_guest_access_ptr(mdev_state->kvm, desc_ptr->addr) = VIRTIO_BLK_S_OK;
 				}
@@ -225,10 +233,9 @@ static int vring_process(struct ixgbe_mdev_state *mdev_state)
 			desc_ptr = &mdev_state->vring.desc[desc_ptr->next];
 		}
 		mdev_state->vring_avail_last_idx = mdev_state->vring.avail->idx;
-		mdev_state->vring.used->ring[mdev_state->vring.used->idx].id = 0;
-		mdev_state->vring.used->ring[mdev_state->vring.used->idx].len = 512;
+		mdev_state->vring.used->ring[mdev_state->vring.used->idx % queue_size].id = mdev_state->vring.avail->ring[i];
+		mdev_state->vring.used->ring[mdev_state->vring.used->idx % queue_size].len = len;
 		mdev_state->vring.used->idx = mdev_state->vring.avail->idx;
-		x550_mdev_trigger_interrupt(mdev_state);
 		x550_mdev_trigger_interrupt(mdev_state);
 	}
 }
@@ -252,10 +259,6 @@ static void x550_mdev_bar_access(struct ixgbe_mdev_state *mdev_state, u32 offset
 		} else {
 			if (offset == 0x10) {
 				printk("guest notify!");
-				unsigned long guest_pfn = mdev_state->bar0_virtio_config.host_access.common.queue_address;
-				struct vring_desc *desc_base;
-				printk("guest pfn = %llx\n", guest_pfn);
-				desc_base = get_guest_access_ptr(mdev_state->kvm, guest_pfn << 12);
 				vring_process(mdev_state);
 			} else {
 				STORE_LE16(&mdev_state->bar0_virtio_config.access_8[offset], *value);
@@ -289,11 +292,13 @@ static ssize_t x550_mdev_read(struct mdev_device *mdev, char __user *buf,
 	u32 index = (*pos) >> 40; //VFIO_PCI_OFFSET_TO_INDEX(*pos);
 	u32 val = 0;
 	u32 offset = (*pos) & 0xffffffff;
+	
+	mutex_lock(&mdev_state_p->ops_lock);
 	switch (index) {
 	case VFIO_PCI_CONFIG_REGION_INDEX:
 		if (count <= 4) {
-			x550_mdev_config_access(mdev_state_p, offset, count, 0, &val);
 			printk("[MDEV RD][config] %d bytes offset %x, val = %x\n", count, offset, val);
+			x550_mdev_config_access(mdev_state_p, offset, count, 0, &val);
 			copy_to_user(buf, &val, count);
 		} else {
 			copy_to_user(buf, &mdev_state_p->vconfig[offset], count);
@@ -306,14 +311,15 @@ static ssize_t x550_mdev_read(struct mdev_device *mdev, char __user *buf,
 	case VFIO_PCI_BAR4_REGION_INDEX:
 	case VFIO_PCI_BAR5_REGION_INDEX:
 	case VFIO_PCI_ROM_REGION_INDEX:
-		x550_mdev_bar_access(mdev_state_p, offset, count, 0, &val);
 		printk("[MDEV RD][bar %d] %d bytes from offset %x, val = %x\n", index, count, offset, val);
+		x550_mdev_bar_access(mdev_state_p, offset, count, 0, &val);
 		copy_to_user(buf, &val, count);
 		break;
 	default:
-		return -EINVAL;
+		break;
 	
 	}
+	mutex_unlock(&mdev_state_p->ops_lock);
 	return count;
 }
 
@@ -324,12 +330,14 @@ static ssize_t x550_mdev_write(struct mdev_device *mdev, const char __user *buf,
 	u32 index = (*pos) >> 40; //VFIO_PCI_OFFSET_TO_INDEX(*pos);
 	u32 val = 0;
 	u32 offset = (*pos) & 0xffffffff;
+	
+	mutex_lock(&mdev_state_p->ops_lock);
 	copy_from_user(&val, buf, count);
 
 	switch (index) {
 	case VFIO_PCI_CONFIG_REGION_INDEX:
-		x550_mdev_config_access(mdev_state_p, offset, count, 1, &val);
 		printk("[MDEV WR][config] %d bytes value %x to offset %llx\n", count, val, offset);
+		x550_mdev_config_access(mdev_state_p, offset, count, 1, &val);
 		break;
 	case VFIO_PCI_BAR0_REGION_INDEX:
 	case VFIO_PCI_BAR1_REGION_INDEX:
@@ -338,13 +346,14 @@ static ssize_t x550_mdev_write(struct mdev_device *mdev, const char __user *buf,
 	case VFIO_PCI_BAR4_REGION_INDEX:
 	case VFIO_PCI_BAR5_REGION_INDEX:
 	case VFIO_PCI_ROM_REGION_INDEX:
-		x550_mdev_bar_access(mdev_state_p, offset, count, 1, &val);
 		printk("[MDEV WR][bar %d] %d bytes value %x to offset %llx\n", index, count, val, offset);
+		x550_mdev_bar_access(mdev_state_p, offset, count, 1, &val);
 		break;
 	default:
-		return -EINVAL;
+		break;
 	
 	}
+	mutex_unlock(&mdev_state_p->ops_lock);
 	return count;
 }
 
@@ -379,6 +388,8 @@ int x550_mdev_get_region_info(struct mdev_device *mdev, struct vfio_region_info 
 
 	bar_index = region_info->index;
 	printk("%s bar_index = %d\n", __FUNCTION__, bar_index);
+	
+	mutex_lock(&mdev_state_p->ops_lock);
 	switch (bar_index) {
 	case VFIO_PCI_CONFIG_REGION_INDEX:
 		size = 0x200;
@@ -405,6 +416,8 @@ int x550_mdev_get_region_info(struct mdev_device *mdev, struct vfio_region_info 
 	region_info->size = size;
 	region_info->offset = (bar_index << 40);
 	region_info->flags = VFIO_REGION_INFO_FLAG_READ | VFIO_REGION_INFO_FLAG_WRITE;
+	
+	mutex_unlock(&mdev_state_p->ops_lock);
 
 	return 0;
 }
@@ -444,7 +457,7 @@ static int x550_mdev_set_irqs(struct mdev_device *mdev, uint32_t flags,
 	if (!mdev_state)
 		return -EINVAL;
 
-	//mutex_lock(&mdev_state->ops_lock);
+	mutex_lock(&mdev_state->ops_lock);
 	switch (index) {
 	case VFIO_PCI_INTX_IRQ_INDEX:
 		switch (flags & VFIO_IRQ_SET_ACTION_TYPE_MASK) {
@@ -527,7 +540,7 @@ static int x550_mdev_set_irqs(struct mdev_device *mdev, uint32_t flags,
 		break;
 	}
 
-	//mutex_unlock(&mdev_state->ops_lock);
+	mutex_unlock(&mdev_state->ops_lock);
 	return ret;
 }
 
@@ -550,7 +563,7 @@ int x550_mdev_trigger_interrupt(struct ixgbe_mdev_state *mdev_state)
 		ret = eventfd_signal(mdev_state->intx_evtfd, 1);
 		
 	mdev_state->bar0_virtio_config.host_access.common.isr_status = 0x1;
-	pr_info("Intx triggered\n");
+	pr_info("INTR triggered, index = %d\n", mdev_state->irq_index);
 #if defined(DEBUG_INTR)
 	pr_info("Intx triggered\n");
 #endif

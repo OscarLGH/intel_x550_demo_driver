@@ -72,6 +72,8 @@ struct ixgbe_mdev_state {
 	struct notifier_block group_notifier;
 
 	struct kvm *kvm;
+	
+	struct mutex ops_lock;
 };
 
 #define STORE_LE8(addr, val) (*(u8 *)addr = val)
