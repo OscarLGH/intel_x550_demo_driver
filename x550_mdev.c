@@ -76,14 +76,14 @@ static int x550_mdev_create_vconfig_space(struct ixgbe_mdev_state *mdev_state)
 		VIRTIO_BLK_F_SIZE_MAX |
 		VIRTIO_BLK_F_BLK_SIZE |
 		VIRTIO_BLK_F_TOPOLOGY;
-	mdev_state->bar0_virtio_config.host_access.common.queue_size = 0x1000;
+	mdev_state->bar0_virtio_config.host_access.common.queue_size = 0x100;
 	mdev_state->bar0_virtio_config.host_access.common.queue_address = 0;
 
-	mdev_state->bar0_virtio_config.host_access.blk.capacity = 0x1000000;
+	mdev_state->bar0_virtio_config.host_access.blk.capacity = 0x1000;
 	mdev_state->bar0_virtio_config.host_access.blk.size_max = 512;
 	mdev_state->bar0_virtio_config.host_access.blk.seg_max = 1;
 	mdev_state->bar0_virtio_config.host_access.blk.geometry.cylinders = 255;
-	mdev_state->bar0_virtio_config.host_access.blk.geometry.heads = 2;
+	mdev_state->bar0_virtio_config.host_access.blk.geometry.heads = 1;
 	mdev_state->bar0_virtio_config.host_access.blk.geometry.sectors = 4;
 	mdev_state->bar0_virtio_config.host_access.blk.blk_size = 512;
 	mdev_state->bar0_virtio_config.host_access.blk.alignment_offset = 512;
@@ -99,7 +99,7 @@ static int x550_mdev_create(struct kobject *kobj, struct mdev_device *mdev)
 	struct ixgbe_mdev_state *mdev_state = kzalloc(sizeof(*mdev_state), GFP_KERNEL);
 	if (mdev_state == NULL)
 		return -EINVAL;
-	
+	mdev_state->mdev = mdev;
 	x550_mdev_create_vconfig_space(mdev_state);
 	mdev_set_drvdata(mdev, mdev_state);
 	
@@ -109,13 +109,29 @@ static int x550_mdev_create(struct kobject *kobj, struct mdev_device *mdev)
 
 static int x550_mdev_remove(struct mdev_device *mdev)
 {
-	
 	return 0;
+}
+
+static int x550_group_notifier(struct notifier_block *nb, unsigned long action, void *data)
+{
+	struct ixgbe_mdev_state *mdev_state = container_of(nb, struct ixgbe_mdev_state, group_notifier);
+	if (action == VFIO_GROUP_NOTIFY_SET_KVM) {
+		mdev_state->kvm = data;
+	}
+
+	return NOTIFY_OK;
 }
 
 static int x550_mdev_open(struct mdev_device *mdev)
 {
-	// struct vdev = mdev_get_drvdata(mdev);
+	unsigned long events;
+	int ret = 0;
+	struct ixgbe_mdev_state *mdev_state = mdev_get_drvdata(mdev);
+
+	mdev_state->group_notifier.notifier_call = x550_group_notifier;
+
+	events = VFIO_GROUP_NOTIFY_SET_KVM;
+	ret = vfio_register_notifier(mdev_dev(mdev), VFIO_GROUP_NOTIFY, &events, &mdev_state->group_notifier);
 	return 0;
 }
 
@@ -154,34 +170,111 @@ static void x550_mdev_config_access(struct ixgbe_mdev_state *mdev_state, u32 off
 	}
 }
 
-int global = 0;
+struct virtio_blk_req {
+	u32 type;
+	u32 reserved;
+	u64 sector;
+	u8 status;
+};
+
+void *get_guest_access_ptr(struct kvm *kvm, u64 gpa)
+{
+	u64 gfn = gpa >> 12;
+	u64 offset = gpa & 0xfff;
+	void *ptr = page_to_virt(pfn_to_page(gfn_to_pfn(kvm, gfn))) + offset;
+	printk("gpa = %llx, ptr = %llx\n", gpa, ptr);
+	return ptr;
+}
+
+int x550_mdev_trigger_interrupt(struct ixgbe_mdev_state *mdev_state);
+
+static int _vring_init(struct ixgbe_mdev_state *mdev_state)
+{
+	int queue_size = mdev_state->bar0_virtio_config.host_access.common.queue_size;
+	unsigned long guest_pfn = mdev_state->bar0_virtio_config.host_access.common.queue_address;
+	mdev_state->vring.desc = get_guest_access_ptr(mdev_state->kvm, guest_pfn << 12);
+	mdev_state->vring.avail = (void *)((unsigned long)mdev_state->vring.desc + 16 * queue_size);
+	mdev_state->vring.used = (void *)(round_up((unsigned long)mdev_state->vring.avail + 6 + 2 * queue_size, PAGE_SIZE));
+	mdev_state->vring_avail_last_idx = 0;
+	pr_info("desc = %llx, avail = %llx used = %llx\n", mdev_state->vring.desc, mdev_state->vring.avail, mdev_state->vring.used);
+}
+
+static int vring_process(struct ixgbe_mdev_state *mdev_state)
+{
+	int i;
+
+	pr_info("mdev_state->vring.avail->idx = %d\n", mdev_state->vring.avail->idx);
+	for (i = mdev_state->vring_avail_last_idx; i < mdev_state->vring.avail->idx; i++) {
+		struct vring_desc *desc_ptr = &mdev_state->vring.desc[mdev_state->vring.avail->ring[i]];
+		pr_info("avail ring idx = %d, ring = %d", i, mdev_state->vring.avail->ring[i]);
+		while (1) {
+			pr_info("vring desc: addr = 0x%llx len = %d, flags = %x, next = %x\n", desc_ptr->addr, desc_ptr->len, desc_ptr->flags, desc_ptr->next);
+			if (desc_ptr->addr != 0) {
+				struct virtio_blk_req *blk_req = get_guest_access_ptr(mdev_state->kvm, desc_ptr->addr);
+				if (desc_ptr->flags == 1) {
+					pr_info("blk request:type = %x sector = %llx status = %x\n", blk_req->type, blk_req->sector, blk_req->status);
+				} else if (desc_ptr->flags == 3) {
+					memset(get_guest_access_ptr(mdev_state->kvm, desc_ptr->addr), 0, desc_ptr->len);
+				} else {
+					*(u8 *)get_guest_access_ptr(mdev_state->kvm, desc_ptr->addr) = VIRTIO_BLK_S_OK;
+				}
+			}
+			if ((desc_ptr->flags & VRING_DESC_F_NEXT) == 0)
+				break;
+
+			desc_ptr = &mdev_state->vring.desc[desc_ptr->next];
+		}
+		mdev_state->vring_avail_last_idx = mdev_state->vring.avail->idx;
+		mdev_state->vring.used->ring[mdev_state->vring.used->idx].id = 0;
+		mdev_state->vring.used->ring[mdev_state->vring.used->idx].len = 512;
+		mdev_state->vring.used->idx = mdev_state->vring.avail->idx;
+		x550_mdev_trigger_interrupt(mdev_state);
+		x550_mdev_trigger_interrupt(mdev_state);
+	}
+}
+
 static void x550_mdev_bar_access(struct ixgbe_mdev_state *mdev_state, u32 offset, u32 size, bool rw, u32 *value)
 {
 	switch (size) {
 	case 1:
 		if (rw == 0) {
 			*value = LOAD_LE8(&mdev_state->bar0_virtio_config.access_8[offset]);
+			if (offset == 0x13) {
+				STORE_LE8(&mdev_state->bar0_virtio_config.access_8[offset], 0);
+			}
 		} else {
 			STORE_LE8(&mdev_state->bar0_virtio_config.access_8[offset], *value);
 		}
 		break;
 	case 2:
 		if (rw == 0) {
-			if (offset == 0xc && global < 2) {
-				global++;
-			} else {
-				*value = LOAD_LE16(&mdev_state->bar0_virtio_config.access_8[offset]);
-			}
+			*value = LOAD_LE16(&mdev_state->bar0_virtio_config.access_8[offset]);
 		} else {
-			STORE_LE16(&mdev_state->bar0_virtio_config.access_8[offset], *value);
+			if (offset == 0x10) {
+				printk("guest notify!");
+				unsigned long guest_pfn = mdev_state->bar0_virtio_config.host_access.common.queue_address;
+				struct vring_desc *desc_base;
+				printk("guest pfn = %llx\n", guest_pfn);
+				desc_base = get_guest_access_ptr(mdev_state->kvm, guest_pfn << 12);
+				vring_process(mdev_state);
+			} else {
+				STORE_LE16(&mdev_state->bar0_virtio_config.access_8[offset], *value);
+			}
 		}
 		break;
 	case 4:
 		if (rw == 0) {
-			*value = LOAD_LE32(&mdev_state->bar0_virtio_config.access_8[offset]);
+			if (offset != 8) {
+				*value = LOAD_LE32(&mdev_state->bar0_virtio_config.access_8[offset]);
+			} else {
+				*value = 0;
+			}
+			
 		} else {
-			if (offset != 8)
-				STORE_LE32(&mdev_state->bar0_virtio_config.access_8[offset], *value);
+			STORE_LE32(&mdev_state->bar0_virtio_config.access_8[offset], *value);
+			if (offset == 8) {
+				_vring_init(mdev_state);
+			}
 		}
 		break;
 	default:
@@ -327,7 +420,7 @@ int x550_mdev_get_irq_info(struct mdev_device *mdev, struct vfio_irq_info *irq_i
 		return -EINVAL;
 
 	irq_info->flags = VFIO_IRQ_INFO_EVENTFD;
-	irq_info->count = 1;
+	irq_info->count = 2;
 
 	if (irq_info->index == VFIO_PCI_INTX_IRQ_INDEX)
 		irq_info->flags |= (VFIO_IRQ_INFO_MASKABLE | VFIO_IRQ_INFO_AUTOMASKED);
@@ -335,6 +428,136 @@ int x550_mdev_get_irq_info(struct mdev_device *mdev, struct vfio_irq_info *irq_i
 		irq_info->flags |= VFIO_IRQ_INFO_NORESIZE;
 
 	return 0;
+}
+
+static int x550_mdev_set_irqs(struct mdev_device *mdev, uint32_t flags,
+			 unsigned int index, unsigned int start,
+			 unsigned int count, void *data)
+{
+	int ret = 0;
+	struct ixgbe_mdev_state *mdev_state;
+
+	if (!mdev)
+		return -EINVAL;
+
+	mdev_state = mdev_get_drvdata(mdev);
+	if (!mdev_state)
+		return -EINVAL;
+
+	//mutex_lock(&mdev_state->ops_lock);
+	switch (index) {
+	case VFIO_PCI_INTX_IRQ_INDEX:
+		switch (flags & VFIO_IRQ_SET_ACTION_TYPE_MASK) {
+		case VFIO_IRQ_SET_ACTION_MASK:
+		case VFIO_IRQ_SET_ACTION_UNMASK:
+			break;
+		case VFIO_IRQ_SET_ACTION_TRIGGER:
+		{
+			if (flags & VFIO_IRQ_SET_DATA_NONE) {
+				pr_info("%s: disable INTx\n", __func__);
+				if (mdev_state->intx_evtfd)
+					eventfd_ctx_put(mdev_state->intx_evtfd);
+				break;
+			}
+
+			if (flags & VFIO_IRQ_SET_DATA_EVENTFD) {
+				int fd = *(int *)data;
+
+				if (fd > 0) {
+					struct eventfd_ctx *evt;
+
+					evt = eventfd_ctx_fdget(fd);
+					if (IS_ERR(evt)) {
+						ret = PTR_ERR(evt);
+						break;
+					}
+					mdev_state->intx_evtfd = evt;
+					mdev_state->irq_fd = fd;
+					mdev_state->irq_index = index;
+					break;
+				}
+			}
+			break;
+		}
+		}
+		break;
+	case VFIO_PCI_MSI_IRQ_INDEX:
+		switch (flags & VFIO_IRQ_SET_ACTION_TYPE_MASK) {
+		case VFIO_IRQ_SET_ACTION_MASK:
+		case VFIO_IRQ_SET_ACTION_UNMASK:
+			break;
+		case VFIO_IRQ_SET_ACTION_TRIGGER:
+			if (flags & VFIO_IRQ_SET_DATA_NONE) {
+				if (mdev_state->msi_evtfd)
+					eventfd_ctx_put(mdev_state->msi_evtfd);
+				pr_info("%s: disable MSI\n", __func__);
+				mdev_state->irq_index = VFIO_PCI_INTX_IRQ_INDEX;
+				break;
+			}
+			if (flags & VFIO_IRQ_SET_DATA_EVENTFD) {
+				int fd = *(int *)data;
+				struct eventfd_ctx *evt;
+
+				if (fd <= 0)
+					break;
+
+				if (mdev_state->msi_evtfd)
+					break;
+
+				evt = eventfd_ctx_fdget(fd);
+				if (IS_ERR(evt)) {
+					ret = PTR_ERR(evt);
+					break;
+				}
+				mdev_state->msi_evtfd = evt;
+				mdev_state->irq_fd = fd;
+				mdev_state->irq_index = index;
+			}
+			break;
+	}
+	break;
+	case VFIO_PCI_MSIX_IRQ_INDEX:
+		pr_info("%s: MSIX_IRQ\n", __func__);
+		break;
+	case VFIO_PCI_ERR_IRQ_INDEX:
+		pr_info("%s: ERR_IRQ\n", __func__);
+		break;
+	case VFIO_PCI_REQ_IRQ_INDEX:
+		pr_info("%s: REQ_IRQ\n", __func__);
+		break;
+	}
+
+	//mutex_unlock(&mdev_state->ops_lock);
+	return ret;
+}
+
+int x550_mdev_trigger_interrupt(struct ixgbe_mdev_state *mdev_state)
+{
+	int ret = -1;
+
+	if ((mdev_state->irq_index == VFIO_PCI_MSI_IRQ_INDEX) &&
+	    (!mdev_state->msi_evtfd))
+		return -EINVAL;
+	else if ((mdev_state->irq_index == VFIO_PCI_INTX_IRQ_INDEX) &&
+		 (!mdev_state->intx_evtfd)) {
+		pr_info("%s: Intr eventfd not found\n", __func__);
+		return -EINVAL;
+	}
+
+	if (mdev_state->irq_index == VFIO_PCI_MSI_IRQ_INDEX)
+		ret = eventfd_signal(mdev_state->msi_evtfd, 1);
+	else
+		ret = eventfd_signal(mdev_state->intx_evtfd, 1);
+		
+	mdev_state->bar0_virtio_config.host_access.common.isr_status = 0x1;
+	pr_info("Intx triggered\n");
+#if defined(DEBUG_INTR)
+	pr_info("Intx triggered\n");
+#endif
+	if (ret != 1)
+		pr_err("%s: eventfd signal failed (%d)\n", __func__, ret);
+
+	return ret;
 }
 
 static long x550_mdev_ioctl(struct mdev_device *mdev, unsigned int cmd, unsigned long arg)
@@ -380,7 +603,36 @@ static long x550_mdev_ioctl(struct mdev_device *mdev, unsigned int cmd, unsigned
 			break;
 		}
 		case VFIO_DEVICE_SET_IRQS:
+		{
+			struct vfio_irq_set hdr;
+			u8 *data = NULL, *ptr = NULL;
+			size_t data_size = 0;
+			int minsz;
+			
+			minsz = offsetofend(struct vfio_irq_set, count);
+			if (copy_from_user(&hdr, (void __user *)arg, minsz))
+				return -EFAULT;
+				
+			ret = vfio_set_irqs_validate_and_prepare(&hdr,
+						VFIO_PCI_NUM_IRQS,
+						VFIO_PCI_NUM_IRQS,
+						&data_size);
+			if (ret)
+				return ret;
+			
+			if (data_size) {
+			ptr = data = memdup_user((void __user *)(arg + minsz),
+						 data_size);
+			if (IS_ERR(data))
+				return PTR_ERR(data);
+			}
+
+			ret = x550_mdev_set_irqs(mdev, hdr.flags, hdr.index, hdr.start,
+				hdr.count, data);
+
+			kfree(ptr);
 			break;
+		}
 		case VFIO_DEVICE_RESET:
 			printk("mdev reset.");
 			x550_mdev_create_vconfig_space(mdev_state_p);

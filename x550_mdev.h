@@ -5,7 +5,6 @@
 #include <linux/proc_fs.h>
 #include <linux/uaccess.h>
 #include <linux/pci_ids.h>
-#include <linux/uaccess.h>
 #include <linux/errno.h>
 #include <linux/cdev.h>
 #include <linux/proc_fs.h>
@@ -13,8 +12,13 @@
 #include <linux/vfio.h>
 #include <linux/mdev.h>
 
+#include <linux/eventfd.h>
+
 #include <linux/virtio_pci.h>
+#include <linux/virtio_ring.h>
 #include <linux/virtio_blk.h>
+
+#include <linux/kvm_host.h>
 
 struct mdev_region_info {
 	u64 start;
@@ -35,8 +39,8 @@ struct virtio_config {
 				u16 queue_notify;
 				u8 device_status;
 				u8 isr_status;
-				u16 config_msix_vector;
-				u16 queue_msix_vector;
+				//u16 config_msix_vector;
+				//u16 queue_msix_vector;
 			} common;
 			struct virtio_blk_config blk;
 		} host_access;
@@ -55,9 +59,19 @@ struct ixgbe_mdev_state {
 	struct virtio_pci_common_cfg pci_comm_cfg;
 
 	struct virtio_config bar0_virtio_config;
+	struct vring vring;
+	int vring_avail_last_idx;
 
+	int num_irqs;
 	int irq_fd;
+	int irq_index;
+	struct eventfd_ctx *intx_evtfd;
 	struct eventfd_ctx *msi_evtfd;
+
+	struct notifier_block iommu_notifier;
+	struct notifier_block group_notifier;
+
+	struct kvm *kvm;
 };
 
 #define STORE_LE8(addr, val) (*(u8 *)addr = val)
