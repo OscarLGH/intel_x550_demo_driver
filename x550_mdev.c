@@ -218,11 +218,12 @@ static int vring_process(struct ixgbe_mdev_state *mdev_state)
 			pr_info("vring desc: addr = 0x%llx len = %d, flags = %x, next = %x\n", desc_ptr->addr, desc_ptr->len, desc_ptr->flags, desc_ptr->next);
 			len += desc_ptr->len;
 			if (desc_ptr->addr != 0) {
-				struct virtio_blk_req *blk_req = get_guest_access_ptr(mdev_state->kvm, desc_ptr->addr);
+				struct virtio_blk_req *blk_req;
 				if (desc_ptr->flags == 1) {
+					blk_req = get_guest_access_ptr(mdev_state->kvm, desc_ptr->addr);
 					pr_info("blk request:type = %x sector = %llx status = %x\n", blk_req->type, blk_req->sector, blk_req->status);
 				} else if (desc_ptr->flags == 3) {
-					memset(get_guest_access_ptr(mdev_state->kvm, desc_ptr->addr), 0x66, desc_ptr->len);
+					memset(get_guest_access_ptr(mdev_state->kvm, desc_ptr->addr), blk_req->sector, desc_ptr->len);
 				} else {
 					*(u8 *)get_guest_access_ptr(mdev_state->kvm, desc_ptr->addr) = VIRTIO_BLK_S_OK;
 				}
@@ -297,8 +298,8 @@ static ssize_t x550_mdev_read(struct mdev_device *mdev, char __user *buf,
 	switch (index) {
 	case VFIO_PCI_CONFIG_REGION_INDEX:
 		if (count <= 4) {
-			printk("[MDEV RD][config] %d bytes offset %x, val = %x\n", count, offset, val);
 			x550_mdev_config_access(mdev_state_p, offset, count, 0, &val);
+			printk("[MDEV RD][config] %d bytes offset %x, val = %x\n", count, offset, val);
 			copy_to_user(buf, &val, count);
 		} else {
 			copy_to_user(buf, &mdev_state_p->vconfig[offset], count);
@@ -311,8 +312,8 @@ static ssize_t x550_mdev_read(struct mdev_device *mdev, char __user *buf,
 	case VFIO_PCI_BAR4_REGION_INDEX:
 	case VFIO_PCI_BAR5_REGION_INDEX:
 	case VFIO_PCI_ROM_REGION_INDEX:
-		printk("[MDEV RD][bar %d] %d bytes from offset %x, val = %x\n", index, count, offset, val);
 		x550_mdev_bar_access(mdev_state_p, offset, count, 0, &val);
+		printk("[MDEV RD][bar %d] %d bytes from offset %x, val = %x\n", index, count, offset, val);
 		copy_to_user(buf, &val, count);
 		break;
 	default:
@@ -564,9 +565,7 @@ int x550_mdev_trigger_interrupt(struct ixgbe_mdev_state *mdev_state)
 		
 	mdev_state->bar0_virtio_config.host_access.common.isr_status = 0x1;
 	pr_info("INTR triggered, index = %d\n", mdev_state->irq_index);
-#if defined(DEBUG_INTR)
-	pr_info("Intx triggered\n");
-#endif
+
 	if (ret != 1)
 		pr_err("%s: eventfd signal failed (%d)\n", __func__, ret);
 
@@ -679,7 +678,11 @@ static int x550_mdev_mmap(struct mdev_device *mdev, struct vm_area_struct *vma)
 
 static void x550_mdev_release(struct mdev_device *mdev)
 {
-
+	unsigned long events;
+	int ret = 0;
+	struct ixgbe_mdev_state *mdev_state = mdev_get_drvdata(mdev);
+	ret = vfio_unregister_notifier(mdev_dev(mdev), VFIO_GROUP_NOTIFY, &mdev_state->group_notifier);
+	return ret;
 }
 
 static ssize_t virtio_blk_dev_show(struct device *dev, struct device_attribute *attr, char *buf)
