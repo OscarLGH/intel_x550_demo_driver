@@ -20,6 +20,8 @@
 
 #include <linux/kvm_host.h>
 
+#include "ixgbe_driver.h"
+
 struct mdev_region_info {
 	u64 start;
 	u64 phys_start;
@@ -74,6 +76,7 @@ struct ixgbe_mdev_state {
 	struct kvm *kvm;
 	
 	struct mutex ops_lock;
+	struct ixgbe_hw *pdev_hw;
 };
 
 #define STORE_LE8(addr, val) (*(u8 *)addr = val)
@@ -83,3 +86,35 @@ struct ixgbe_mdev_state {
 #define LOAD_LE8(addr) (*(u8 *)addr)
 #define LOAD_LE16(addr) (*(u16 *)addr)
 #define LOAD_LE32(addr) (*(u32 *)addr)
+
+struct packet_ctrl {
+	u32 type;
+	u32 reserved;
+	u64 packet_seq;
+	u64 size;
+};
+
+struct virtio_blk_req {
+	u32 type;
+	u32 ioprio;
+	u64 sector;
+	u64 size; /* only for mdev-nic */
+};
+
+struct nic_payload_blk_req {
+	struct mac_frame_hdr mac_hdr;
+	struct packet_ctrl pkt_ctrl;
+	struct virtio_blk_req blk_req;
+};
+
+struct nic_payload_blk_data {
+	struct mac_frame_hdr mac_hdr;
+	struct packet_ctrl pkt_ctrl;
+	u8 buffer[1024];
+};
+
+struct nic_payload_blk_status {
+	struct mac_frame_hdr mac_hdr;
+	struct packet_ctrl pkt_ctrl;
+	u32 status;
+};

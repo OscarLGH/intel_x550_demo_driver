@@ -1,6 +1,6 @@
-#include "x550_mdev.h"
+#include "ixgbe_mdev.h"
 
-static int x550_mdev_create_vconfig_space(struct ixgbe_mdev_state *mdev_state)
+static int ixgbe_mdev_create_vconfig_space(struct ixgbe_mdev_state *mdev_state)
 {
 	/* device ID */
 	STORE_LE32(&mdev_state->vconfig[PCI_VENDOR_ID], 0x1af4);
@@ -23,6 +23,8 @@ static int x550_mdev_create_vconfig_space(struct ixgbe_mdev_state *mdev_state)
 	/* BARs */
 	STORE_LE32(&mdev_state->vconfig[PCI_BASE_ADDRESS_0], 0x1);	/* BAR1: IO */
 
+#define VIRTIO_CFG_BAR0 0
+#define VIRTIO_CFG_BAR4 4
 	/* Cap Ptr */
 	mdev_state->vconfig[0x34] = 0x98;
 
@@ -41,31 +43,70 @@ static int x550_mdev_create_vconfig_space(struct ixgbe_mdev_state *mdev_state)
 	mdev_state->vconfig[0x85] = 0x70;
 	mdev_state->vconfig[0x86] = 0x14;
 	mdev_state->vconfig[0x87] = VIRTIO_PCI_CAP_PCI_CFG;
-	mdev_state->vconfig[0x88] = 0x00;
+	mdev_state->vconfig[0x88] = VIRTIO_CFG_BAR0;
+	mdev_state->vconfig[0x89] = 0x00;
+	mdev_state->vconfig[0x8a] = 0x00;
+	mdev_state->vconfig[0x8b] = 0x00;
 	
 	mdev_state->vconfig[0x70] = 0x09;
 	mdev_state->vconfig[0x71] = 0x60;
 	mdev_state->vconfig[0x72] = 0x14;
 	mdev_state->vconfig[0x73] = VIRTIO_PCI_CAP_NOTIFY_CFG;
-	mdev_state->vconfig[0x74] = 0x04;
+	mdev_state->vconfig[0x74] = VIRTIO_CFG_BAR4;
+	mdev_state->vconfig[0x75] = 0x00;
+	mdev_state->vconfig[0x76] = 0x00;
+	mdev_state->vconfig[0x77] = 0x00;
+	mdev_state->vconfig[0x78] = 0x00;
+	mdev_state->vconfig[0x79] = 0x30;
+	mdev_state->vconfig[0x7a] = 0x00;
+	mdev_state->vconfig[0x7b] = 0x00;
+	mdev_state->vconfig[0x7c] = 0x00;
+	mdev_state->vconfig[0x7d] = 0x10;
+	mdev_state->vconfig[0x7e] = 0x00;
+	mdev_state->vconfig[0x7f] = 0x00;
 	
 	mdev_state->vconfig[0x60] = 0x09;
 	mdev_state->vconfig[0x61] = 0x50;
 	mdev_state->vconfig[0x62] = 0x10;
 	mdev_state->vconfig[0x63] = VIRTIO_PCI_CAP_DEVICE_CFG;
-	mdev_state->vconfig[0x64] = 0x04;
+	mdev_state->vconfig[0x64] = VIRTIO_CFG_BAR4;
+	mdev_state->vconfig[0x65] = 0x00;
+	mdev_state->vconfig[0x66] = 0x00;
+	mdev_state->vconfig[0x67] = 0x00;
+	mdev_state->vconfig[0x68] = 0x00;
+	mdev_state->vconfig[0x69] = 0x20;
+	mdev_state->vconfig[0x6a] = 0x00;
+	mdev_state->vconfig[0x6b] = 0x00;
+	mdev_state->vconfig[0x6c] = 0x00;
+	mdev_state->vconfig[0x6d] = 0x10;
+	mdev_state->vconfig[0x6e] = 0x00;
+	mdev_state->vconfig[0x6f] = 0x00;
 	
 	mdev_state->vconfig[0x50] = 0x09;
 	mdev_state->vconfig[0x51] = 0x40;
 	mdev_state->vconfig[0x52] = 0x10;
 	mdev_state->vconfig[0x53] = VIRTIO_PCI_CAP_ISR_CFG;
-	mdev_state->vconfig[0x54] = 0x04;
+	mdev_state->vconfig[0x54] = VIRTIO_CFG_BAR4;
+	mdev_state->vconfig[0x55] = 0x00;
+	mdev_state->vconfig[0x56] = 0x00;
+	mdev_state->vconfig[0x57] = 0x00;
+	mdev_state->vconfig[0x58] = 0x00;
+	mdev_state->vconfig[0x59] = 0x10;
+	mdev_state->vconfig[0x5a] = 0x00;
+	mdev_state->vconfig[0x5b] = 0x00;
+	mdev_state->vconfig[0x5c] = 0x00;
+	mdev_state->vconfig[0x5d] = 0x10;
+	mdev_state->vconfig[0x5e] = 0x00;
+	mdev_state->vconfig[0x5f] = 0x00;
 	
 	mdev_state->vconfig[0x40] = 0x09;
 	mdev_state->vconfig[0x41] = 0x00;
 	mdev_state->vconfig[0x42] = 0x10;
 	mdev_state->vconfig[0x43] = VIRTIO_PCI_CAP_COMMON_CFG;
-	mdev_state->vconfig[0x44] = 0x04;
+	mdev_state->vconfig[0x44] = VIRTIO_CFG_BAR4;
+	mdev_state->vconfig[0x45] = 0x00;
+	mdev_state->vconfig[0x46] = 0x00;
+	mdev_state->vconfig[0x47] = 0x00;
 
 	/* intr line */
 	mdev_state->vconfig[0x3c] = 0x30;
@@ -75,14 +116,13 @@ static int x550_mdev_create_vconfig_space(struct ixgbe_mdev_state *mdev_state)
 	
 	mdev_state->bar0_virtio_config.host_access.common.device_status = 0;
 	mdev_state->bar0_virtio_config.host_access.common.device_features = 
-		VIRTIO_BLK_F_RO |
 		VIRTIO_BLK_F_SIZE_MAX |
 		VIRTIO_BLK_F_BLK_SIZE |
 		VIRTIO_BLK_F_TOPOLOGY;
 	mdev_state->bar0_virtio_config.host_access.common.queue_size = 0x100;
 	mdev_state->bar0_virtio_config.host_access.common.queue_address = 0;
 
-	mdev_state->bar0_virtio_config.host_access.blk.capacity = 0x1000;
+	mdev_state->bar0_virtio_config.host_access.blk.capacity = 0x8000;
 	mdev_state->bar0_virtio_config.host_access.blk.size_max = 512;
 	mdev_state->bar0_virtio_config.host_access.blk.seg_max = 1;
 	mdev_state->bar0_virtio_config.host_access.blk.geometry.cylinders = 255;
@@ -97,26 +137,27 @@ static int x550_mdev_create_vconfig_space(struct ixgbe_mdev_state *mdev_state)
 	return 0;
 }
 
-static int x550_mdev_create(struct kobject *kobj, struct mdev_device *mdev)
+static int ixgbe_mdev_create(struct kobject *kobj, struct mdev_device *mdev)
 {
 	struct ixgbe_mdev_state *mdev_state = kzalloc(sizeof(*mdev_state), GFP_KERNEL);
 	if (mdev_state == NULL)
 		return -EINVAL;
 	mdev_state->mdev = mdev;
+	mdev_state->pdev_hw = dev_get_drvdata(mdev_parent_dev(mdev));
 	mutex_init(&mdev_state->ops_lock);
-	x550_mdev_create_vconfig_space(mdev_state);
+	ixgbe_mdev_create_vconfig_space(mdev_state);
 	mdev_set_drvdata(mdev, mdev_state);
 	
-	printk("x550-mdev vconfig space created.\n");
+	printk("ixgbe-mdev vconfig space created.\n");
 	return 0;
 }
 
-static int x550_mdev_remove(struct mdev_device *mdev)
+static int ixgbe_mdev_remove(struct mdev_device *mdev)
 {
 	return 0;
 }
 
-static int x550_group_notifier(struct notifier_block *nb, unsigned long action, void *data)
+static int ixgbe_group_notifier(struct notifier_block *nb, unsigned long action, void *data)
 {
 	struct ixgbe_mdev_state *mdev_state = container_of(nb, struct ixgbe_mdev_state, group_notifier);
 	if (action == VFIO_GROUP_NOTIFY_SET_KVM) {
@@ -126,20 +167,20 @@ static int x550_group_notifier(struct notifier_block *nb, unsigned long action, 
 	return NOTIFY_OK;
 }
 
-static int x550_mdev_open(struct mdev_device *mdev)
+static int ixgbe_mdev_open(struct mdev_device *mdev)
 {
 	unsigned long events;
 	int ret = 0;
 	struct ixgbe_mdev_state *mdev_state = mdev_get_drvdata(mdev);
 
-	mdev_state->group_notifier.notifier_call = x550_group_notifier;
+	mdev_state->group_notifier.notifier_call = ixgbe_group_notifier;
 
 	events = VFIO_GROUP_NOTIFY_SET_KVM;
 	ret = vfio_register_notifier(mdev_dev(mdev), VFIO_GROUP_NOTIFY, &events, &mdev_state->group_notifier);
 	return 0;
 }
 
-static void x550_mdev_config_access(struct ixgbe_mdev_state *mdev_state, u32 offset, u32 size, bool rw, u32 *value)
+static void ixgbe_mdev_config_access(struct ixgbe_mdev_state *mdev_state, u32 offset, u32 size, bool rw, u32 *value)
 {
 	switch (size) {
 	case 1:
@@ -174,13 +215,6 @@ static void x550_mdev_config_access(struct ixgbe_mdev_state *mdev_state, u32 off
 	}
 }
 
-struct virtio_blk_req {
-	u32 type;
-	u32 reserved;
-	u64 sector;
-	u8 status;
-};
-
 void *get_guest_access_ptr(struct kvm *kvm, u64 gpa)
 {
 	u64 gfn = gpa >> 12;
@@ -190,7 +224,7 @@ void *get_guest_access_ptr(struct kvm *kvm, u64 gpa)
 	return ptr;
 }
 
-int x550_mdev_trigger_interrupt(struct ixgbe_mdev_state *mdev_state);
+int ixgbe_mdev_trigger_interrupt(struct ixgbe_mdev_state *mdev_state);
 
 static int _vring_init(struct ixgbe_mdev_state *mdev_state)
 {
@@ -203,45 +237,122 @@ static int _vring_init(struct ixgbe_mdev_state *mdev_state)
 	pr_info("desc = %llx, avail = %llx used = %llx\n", mdev_state->vring.desc, mdev_state->vring.avail, mdev_state->vring.used);
 }
 
+#define PKT_VIRTIO_BLK_REQ 1
+#define PKT_VIRTIO_BLK_DATA 2
+#define PKT_VIRTIO_BLK_STATUS 3
+
+int virtio_blk_send_req(struct ixgbe_mdev_state *mdev_state, struct virtio_blk_req *blk_req, long size)
+{
+	struct nic_payload_blk_req req = {
+		.mac_hdr = {
+			{0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+			{0x12, 0x34, 0x56, 0x78, 0xff, 0xff},
+			0x0008
+			},
+		.pkt_ctrl = {
+			.type = PKT_VIRTIO_BLK_REQ,
+			.packet_seq = 0,
+		},
+	};
+
+	memcpy(&req.mac_hdr.src_mac, mdev_state->pdev_hw->mac_addr, 6);
+	memcpy(&req.blk_req, blk_req, sizeof(*blk_req));
+	req.blk_req.size = size;
+	packet_transmit_kern(mdev_state->pdev_hw, &req, sizeof(req));
+}
+
+int virtio_blk_get_data(struct ixgbe_mdev_state *mdev_state, void *data, long size)
+{
+	int recv_size = 0;
+	char recv_buffer[1536];
+	int pkt_size;
+	int wait_flag = 0;
+	int ret = -1;;
+	struct nic_payload_blk_data *pkt_data = (void *)recv_buffer;
+	while (recv_size < size) {
+
+		if (ret) {
+			wait_for_pkt_recv(mdev_state->pdev_hw);
+		}
+
+		ret = packet_receive_kern(mdev_state->pdev_hw, recv_buffer, &pkt_size);
+		if (ret == 0) {
+			//printk("receive size:%d\n", pkt_size);
+			if (pkt_data->pkt_ctrl.type == PKT_VIRTIO_BLK_DATA) {
+				recv_size += pkt_data->pkt_ctrl.size;
+				memcpy(data, &pkt_data->buffer, pkt_data->pkt_ctrl.size);
+				//printk("receive data:%02x %02x size = %d\n", ((char *)data)[0], ((char *)data)[1], pkt_data->pkt_ctrl.size);
+				data = (char *)data + pkt_data->pkt_ctrl.size;
+				//if (wait_flag)
+				//	wait_flag--;
+			} else {
+				break;
+			}
+		}
+	}
+}
+
+int virtio_blk_get_status(struct ixgbe_mdev_state *mdev_state)
+{
+	int recv_size = 0;
+	char recv_buffer[1536];
+	int pkt_size;
+	struct nic_payload_blk_status *pkt_status = (void *)recv_buffer;
+	packet_receive_kern(mdev_state->pdev_hw, recv_buffer, &pkt_size);
+	if (pkt_status->pkt_ctrl.type == PKT_VIRTIO_BLK_STATUS) {
+		return pkt_status->status;
+	}
+	
+	return -1;
+}
+
 static int vring_process(struct ixgbe_mdev_state *mdev_state)
 {
 	int i;
 	int len;
 	int queue_size = mdev_state->bar0_virtio_config.host_access.common.queue_size;
+	int seq = 0;
+	int data_len;
 
 	pr_info("mdev_state->vring.avail->idx = %d\n", mdev_state->vring.avail->idx);
 	for (i = mdev_state->vring_avail_last_idx % queue_size; i != mdev_state->vring.avail->idx % queue_size; i = (i + 1) % queue_size) {
 		struct vring_desc *desc_ptr = &mdev_state->vring.desc[mdev_state->vring.avail->ring[i]];
 		pr_info("avail ring idx = %d, ring = %d", i, mdev_state->vring.avail->ring[i]);
 		len = 0;
+		seq = 0;
+		
 		while (1) {
 			pr_info("vring desc: addr = 0x%llx len = %d, flags = %x, next = %x\n", desc_ptr->addr, desc_ptr->len, desc_ptr->flags, desc_ptr->next);
 			len += desc_ptr->len;
 			if (desc_ptr->addr != 0) {
 				struct virtio_blk_req *blk_req;
-				if (desc_ptr->flags == 1) {
+				if (seq == 0) {
 					blk_req = get_guest_access_ptr(mdev_state->kvm, desc_ptr->addr);
-					pr_info("blk request:type = %x sector = %llx status = %x\n", blk_req->type, blk_req->sector, blk_req->status);
-				} else if (desc_ptr->flags == 3) {
-					memset(get_guest_access_ptr(mdev_state->kvm, desc_ptr->addr), blk_req->sector, desc_ptr->len);
-				} else {
-					*(u8 *)get_guest_access_ptr(mdev_state->kvm, desc_ptr->addr) = VIRTIO_BLK_S_OK;
+					pr_info("blk request:type = %x ioprio = %x sector = %llx\n", blk_req->type, blk_req->ioprio, blk_req->sector);
+					//virtio_blk_send_req(mdev_state, blk_req);
+				} else if (seq == 1) {
+					//memset(get_guest_access_ptr(mdev_state->kvm, desc_ptr->addr), blk_req->sector, desc_ptr->len);
+					virtio_blk_send_req(mdev_state, blk_req, desc_ptr->len);
+					virtio_blk_get_data(mdev_state, get_guest_access_ptr(mdev_state->kvm, desc_ptr->addr), desc_ptr->len);
+				} else if (seq == 2) {
+					*(u8 *)get_guest_access_ptr(mdev_state->kvm, desc_ptr->addr) = 0;//virtio_blk_get_status(mdev_state);
 				}
 			}
 			if ((desc_ptr->flags & VRING_DESC_F_NEXT) == 0)
 				break;
 
 			desc_ptr = &mdev_state->vring.desc[desc_ptr->next];
+			seq++;
 		}
 		mdev_state->vring_avail_last_idx = mdev_state->vring.avail->idx;
 		mdev_state->vring.used->ring[mdev_state->vring.used->idx % queue_size].id = mdev_state->vring.avail->ring[i];
 		mdev_state->vring.used->ring[mdev_state->vring.used->idx % queue_size].len = len;
 		mdev_state->vring.used->idx = mdev_state->vring.avail->idx;
-		x550_mdev_trigger_interrupt(mdev_state);
+		ixgbe_mdev_trigger_interrupt(mdev_state);
 	}
 }
 
-static void x550_mdev_bar_access(struct ixgbe_mdev_state *mdev_state, u32 offset, u32 size, bool rw, u32 *value)
+static void ixgbe_mdev_bar_access(struct ixgbe_mdev_state *mdev_state, u32 offset, u32 size, bool rw, u32 *value)
 {
 	switch (size) {
 	case 1:
@@ -286,7 +397,7 @@ static void x550_mdev_bar_access(struct ixgbe_mdev_state *mdev_state, u32 offset
 	}
 }
 
-static ssize_t x550_mdev_read(struct mdev_device *mdev, char __user *buf,
+static ssize_t ixgbe_mdev_read(struct mdev_device *mdev, char __user *buf,
 		size_t count, loff_t *pos)
 {
 	struct ixgbe_mdev_state *mdev_state_p = mdev_get_drvdata(mdev);
@@ -298,7 +409,7 @@ static ssize_t x550_mdev_read(struct mdev_device *mdev, char __user *buf,
 	switch (index) {
 	case VFIO_PCI_CONFIG_REGION_INDEX:
 		if (count <= 4) {
-			x550_mdev_config_access(mdev_state_p, offset, count, 0, &val);
+			ixgbe_mdev_config_access(mdev_state_p, offset, count, 0, &val);
 			printk("[MDEV RD][config] %d bytes offset %x, val = %x\n", count, offset, val);
 			copy_to_user(buf, &val, count);
 		} else {
@@ -312,7 +423,7 @@ static ssize_t x550_mdev_read(struct mdev_device *mdev, char __user *buf,
 	case VFIO_PCI_BAR4_REGION_INDEX:
 	case VFIO_PCI_BAR5_REGION_INDEX:
 	case VFIO_PCI_ROM_REGION_INDEX:
-		x550_mdev_bar_access(mdev_state_p, offset, count, 0, &val);
+		ixgbe_mdev_bar_access(mdev_state_p, offset, count, 0, &val);
 		printk("[MDEV RD][bar %d] %d bytes from offset %x, val = %x\n", index, count, offset, val);
 		copy_to_user(buf, &val, count);
 		break;
@@ -324,7 +435,7 @@ static ssize_t x550_mdev_read(struct mdev_device *mdev, char __user *buf,
 	return count;
 }
 
-static ssize_t x550_mdev_write(struct mdev_device *mdev, const char __user *buf,
+static ssize_t ixgbe_mdev_write(struct mdev_device *mdev, const char __user *buf,
                 size_t count, loff_t *pos)
 {
 	struct ixgbe_mdev_state *mdev_state_p = mdev_get_drvdata(mdev);
@@ -338,7 +449,7 @@ static ssize_t x550_mdev_write(struct mdev_device *mdev, const char __user *buf,
 	switch (index) {
 	case VFIO_PCI_CONFIG_REGION_INDEX:
 		printk("[MDEV WR][config] %d bytes value %x to offset %llx\n", count, val, offset);
-		x550_mdev_config_access(mdev_state_p, offset, count, 1, &val);
+		ixgbe_mdev_config_access(mdev_state_p, offset, count, 1, &val);
 		break;
 	case VFIO_PCI_BAR0_REGION_INDEX:
 	case VFIO_PCI_BAR1_REGION_INDEX:
@@ -348,7 +459,7 @@ static ssize_t x550_mdev_write(struct mdev_device *mdev, const char __user *buf,
 	case VFIO_PCI_BAR5_REGION_INDEX:
 	case VFIO_PCI_ROM_REGION_INDEX:
 		printk("[MDEV WR][bar %d] %d bytes value %x to offset %llx\n", index, count, val, offset);
-		x550_mdev_bar_access(mdev_state_p, offset, count, 1, &val);
+		ixgbe_mdev_bar_access(mdev_state_p, offset, count, 1, &val);
 		break;
 	default:
 		break;
@@ -358,7 +469,7 @@ static ssize_t x550_mdev_write(struct mdev_device *mdev, const char __user *buf,
 	return count;
 }
 
-int x550_mdev_get_device_info(struct mdev_device *mdev, struct vfio_device_info *dev_info)
+int ixgbe_mdev_get_device_info(struct mdev_device *mdev, struct vfio_device_info *dev_info)
 {
 	struct ixgbe_mdev_state *mdev_state_p = mdev_get_drvdata(mdev);
 
@@ -375,7 +486,7 @@ int x550_mdev_get_device_info(struct mdev_device *mdev, struct vfio_device_info 
 	return 0;
 }
 
-int x550_mdev_get_region_info(struct mdev_device *mdev, struct vfio_region_info *region_info)
+int ixgbe_mdev_get_region_info(struct mdev_device *mdev, struct vfio_region_info *region_info)
 {
 	u32 size = 0;
 	u64 bar_index;
@@ -423,7 +534,7 @@ int x550_mdev_get_region_info(struct mdev_device *mdev, struct vfio_region_info 
 	return 0;
 }
 
-int x550_mdev_get_irq_info(struct mdev_device *mdev, struct vfio_irq_info *irq_info)
+int ixgbe_mdev_get_irq_info(struct mdev_device *mdev, struct vfio_irq_info *irq_info)
 {
 	struct ixgbe_mdev_state *mdev_state_p = mdev_get_drvdata(mdev);
 
@@ -444,7 +555,7 @@ int x550_mdev_get_irq_info(struct mdev_device *mdev, struct vfio_irq_info *irq_i
 	return 0;
 }
 
-static int x550_mdev_set_irqs(struct mdev_device *mdev, uint32_t flags,
+static int ixgbe_mdev_set_irqs(struct mdev_device *mdev, uint32_t flags,
 			 unsigned int index, unsigned int start,
 			 unsigned int count, void *data)
 {
@@ -545,7 +656,7 @@ static int x550_mdev_set_irqs(struct mdev_device *mdev, uint32_t flags,
 	return ret;
 }
 
-int x550_mdev_trigger_interrupt(struct ixgbe_mdev_state *mdev_state)
+int ixgbe_mdev_trigger_interrupt(struct ixgbe_mdev_state *mdev_state)
 {
 	int ret = -1;
 
@@ -572,7 +683,7 @@ int x550_mdev_trigger_interrupt(struct ixgbe_mdev_state *mdev_state)
 	return ret;
 }
 
-static long x550_mdev_ioctl(struct mdev_device *mdev, unsigned int cmd, unsigned long arg)
+static long ixgbe_mdev_ioctl(struct mdev_device *mdev, unsigned int cmd, unsigned long arg)
 {
 	struct ixgbe_mdev_state *mdev_state_p = mdev_get_drvdata(mdev);
 	int ret = 0;
@@ -584,7 +695,7 @@ static long x550_mdev_ioctl(struct mdev_device *mdev, unsigned int cmd, unsigned
 			if (copy_from_user(&info, (void __user *)arg, sizeof(info)))
 				return -EINVAL;
 				
-			x550_mdev_get_device_info(mdev, &info);
+			ixgbe_mdev_get_device_info(mdev, &info);
 
 			if (copy_to_user((void __user *)arg, &info, sizeof(info)))
 				return -EINVAL;
@@ -597,7 +708,7 @@ static long x550_mdev_ioctl(struct mdev_device *mdev, unsigned int cmd, unsigned
 			if (copy_from_user(&info, (void __user *)arg, sizeof(info)))
 				return -EINVAL;
 			
-			x550_mdev_get_region_info(mdev, &info);
+			ixgbe_mdev_get_region_info(mdev, &info);
 			if (copy_to_user((void __user *)arg, &info, sizeof(info)))
 				return -EINVAL;
 			break;
@@ -609,7 +720,7 @@ static long x550_mdev_ioctl(struct mdev_device *mdev, unsigned int cmd, unsigned
 			if (copy_from_user(&info, (void __user *)arg, sizeof(info)))
 				return -EINVAL;
 			
-			x550_mdev_get_irq_info(mdev, &info);
+			ixgbe_mdev_get_irq_info(mdev, &info);
 			if (copy_to_user((void __user *)arg, &info, sizeof(info)))
 				return -EINVAL;
 			break;
@@ -639,7 +750,7 @@ static long x550_mdev_ioctl(struct mdev_device *mdev, unsigned int cmd, unsigned
 				return PTR_ERR(data);
 			}
 
-			ret = x550_mdev_set_irqs(mdev, hdr.flags, hdr.index, hdr.start,
+			ret = ixgbe_mdev_set_irqs(mdev, hdr.flags, hdr.index, hdr.start,
 				hdr.count, data);
 
 			kfree(ptr);
@@ -647,7 +758,7 @@ static long x550_mdev_ioctl(struct mdev_device *mdev, unsigned int cmd, unsigned
 		}
 		case VFIO_DEVICE_RESET:
 			printk("mdev reset.");
-			x550_mdev_create_vconfig_space(mdev_state_p);
+			ixgbe_mdev_create_vconfig_space(mdev_state_p);
 			break;
 		default:
 			break;
@@ -656,12 +767,12 @@ static long x550_mdev_ioctl(struct mdev_device *mdev, unsigned int cmd, unsigned
 	return ret;
 }
 
-static int x550_mdev_mmap(struct mdev_device *mdev, struct vm_area_struct *vma)
+static int ixgbe_mdev_mmap(struct mdev_device *mdev, struct vm_area_struct *vma)
 {
 	/*
 	size_t size = vma->vm_end - vma->vm_start;
 	int index;
-	struct x550 *dev = PDE_DATA(file_inode(filp));
+	struct ixgbe *dev = PDE_DATA(file_inode(filp));
 	sscanf(filp->f_path.dentry->d_iname, "bar%d", &index);
 	pgprot_noncached(vma->vm_page_prot);
 	if (remap_pfn_range(vma,
@@ -676,7 +787,7 @@ static int x550_mdev_mmap(struct mdev_device *mdev, struct vm_area_struct *vma)
 	return 0;
 }
 
-static void x550_mdev_release(struct mdev_device *mdev)
+static void ixgbe_mdev_release(struct mdev_device *mdev)
 {
 	unsigned long events;
 	int ret = 0;
@@ -729,7 +840,7 @@ const struct attribute_group *virtio_blk_mdev_groups[] = {
 
 static ssize_t name_show(struct kobject *kobj, struct device *dev, char *buf)
 {
-	return sprintf(buf, "x550-mdev-virtio\n");
+	return sprintf(buf, "ixgbe-mdev-virtio\n");
 }
 
 MDEV_TYPE_ATTR_RO(name);
@@ -765,27 +876,27 @@ struct attribute_group *mdev_typs_groups[] = {
 	NULL,
 };
 
-static struct mdev_parent_ops x550_mdev_ops = {
+static struct mdev_parent_ops ixgbe_mdev_ops = {
 	.owner = THIS_MODULE,
 	.dev_attr_groups = virtio_blk_groups,
 	.mdev_attr_groups = virtio_blk_mdev_groups,
 	.supported_type_groups = mdev_typs_groups,
-	.create = x550_mdev_create,
-	.remove = x550_mdev_remove,
-	.open = x550_mdev_open,
-	.read = x550_mdev_read,
-	.write = x550_mdev_write,
-	.mmap = x550_mdev_mmap,
-	.ioctl = x550_mdev_ioctl,
-	.release = x550_mdev_release
+	.create = ixgbe_mdev_create,
+	.remove = ixgbe_mdev_remove,
+	.open = ixgbe_mdev_open,
+	.read = ixgbe_mdev_read,
+	.write = ixgbe_mdev_write,
+	.mmap = ixgbe_mdev_mmap,
+	.ioctl = ixgbe_mdev_ioctl,
+	.release = ixgbe_mdev_release
 };
 
-int x550_mdev_init(struct device *dev)
+int ixgbe_mdev_init(struct device *dev)
 {
-	return mdev_register_device(dev, &x550_mdev_ops);
+	return mdev_register_device(dev, &ixgbe_mdev_ops);
 }
 
-void x550_mdev_exit(struct device *dev)
+void ixgbe_mdev_exit(struct device *dev)
 {
 	mdev_unregister_device(dev);
 }

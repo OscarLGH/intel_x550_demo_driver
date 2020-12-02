@@ -24,7 +24,7 @@ int main()
 	int i;
 	int ret;
 	volatile u32 *bar0;
-	int fd = open("/dev/ixgbe_01:00.00", O_RDWR);
+	int fd = open("/dev/ixgbe_01:00.01", O_RDWR);
 	int efd = eventfd(0, EFD_CLOEXEC);
 	long event = 0;
 	bar0 = mmap(NULL, 0x400000, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
@@ -39,7 +39,7 @@ int main()
 		printf("event = %d\n", event);
 		ret = read(fd, test_buffer, 32);
 		printf("===========read============\n");
-		for (i = 0; i < 32; i++) {
+		for (i = 0; i < 64; i++) {
 			printf("%02x ", test_buffer[i]);
 		}
 		printf("\n=========================\n");

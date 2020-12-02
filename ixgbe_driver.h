@@ -1,3 +1,6 @@
+#ifndef _IXGBE_DRIVER_H
+#define _IXGBE_DRIVER_H
+
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -22,40 +25,16 @@
 #include "ixgbe_type.h"
 
 
-#define PCI_VENDOR_ID_MODEL 0x8086
-#define PCI_DEVICE_ID_MODEL 0x1563
-#define PCI_MODEL_BASE_CLASS 0x2
+#define INTEL_VENDOR_ID 0x8086
+#define X550_DEVICE_ID 0x1563
+#define X540_DEVICE_ID 0x1528
+#define X520_DEVICE_ID 0x10fb
+#define PCI_NET_BASE_CLASS 0x2
 
 struct pci_bar_reg {
 	u64 phys;
 	u32 *virt;
 	long size;
-};
-
-struct pci_driver_model {
-	struct pci_dev *pdev;
-	spinlock_t lock;
-	struct pci_bar_reg regs[6];
-	void *oprom;
-	u32 irq_cnt;
-	u32 reserved;
-
-	/* DMA buffer */
-	dma_addr_t dma_buffer;
-	void *dma_buffer_virt;
-	size_t dma_buffer_size;
-
-	int irq_count;
-
-	/* for eventfd */
-	struct eventfd_ctx *efd_ctx;
-
-	/* work queue for irq buttom half */
-	struct work_struct irq_wq;
-
-	/* for char dev file */
-	struct cdev cdev;
-	dev_t dev;
 };
 
 /* basic ioctls */
@@ -75,6 +54,9 @@ struct ixgbe_tx_queue {
 	u64 size;
 	u64 tail;
 	u64 head;
+	u64 last_head;
+
+	spinlock_t lock;
 };
 
 struct ixgbe_rx_queue {
@@ -85,6 +67,11 @@ struct ixgbe_rx_queue {
 	u64 size;
 	u64 tail;
 	u64 head;
+	u64 last_head;
+
+	spinlock_t lock;
+	struct completion completion;
+	u64 unhandled_pkt;
 };
 
 struct ixgbe_statistic {
@@ -116,9 +103,7 @@ struct ixgbe_hw {
 	u8 mac_addr[6];
 };
 
-u32 ixgbe_read_reg(struct ixgbe_hw *hw, u32 reg);
-
-u32 ixgbe_read_reg(struct ixgbe_hw *hw, u32 reg)
+static inline ixgbe_read_reg(struct ixgbe_hw *hw, u32 reg)
 {
 	return *(u32 *)(hw->mmio_virt + reg / 4);
 }
@@ -143,10 +128,17 @@ struct mac_frame_hdr {
 	u8 dst_mac[6];
 	u8 src_mac[6];
 	u16 type;
+	unsigned short padding;
 };
 
 int packet_transmit(struct ixgbe_hw *hw, void __user *buffer, int len);
 int packet_receive(struct ixgbe_hw *hw, void __user *buffer, int *len);
+int packet_transmit_kern(struct ixgbe_hw *hw, void *buffer, int len);
+int packet_receive_kern(struct ixgbe_hw *hw, void *buffer, int *len);
+void wait_for_pkt_recv(struct ixgbe_hw *hw);
+int unhandled_recv_pkts(struct ixgbe_hw *hw);
 
-int x550_mdev_init(struct device *dev);
-void x550_mdev_exit(struct device *dev);
+int ixgbe_mdev_init(struct device *dev);
+void ixgbe_mdev_exit(struct device *dev);
+
+#endif
