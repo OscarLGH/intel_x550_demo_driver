@@ -272,6 +272,9 @@ void irq_work_queue_func(struct work_struct *wq)
 		}
 	}
 
+	if (intr_cause & (1 << 17)) {
+		printk("rx miss.\n");
+	}
 	if (intr_cause & 0xffff <= 0xffff) {
 
 		tx_pkt_cnt = IXGBE_READ_REG(hw, IXGBE_TXDGPC);
@@ -291,6 +294,9 @@ void irq_work_queue_func(struct work_struct *wq)
 			complete(&hw->rx_desc_ring[0]->completion);
 			if (hw->efd_ctx)
 				eventfd_signal(hw->efd_ctx, rx_pkt_cnt);
+			if (rx_pkt_cnt == 0) {
+				printk("===========warning=========");
+			}
 		}
 
 		hw->tx_desc_ring[0]->head = IXGBE_READ_REG(hw, IXGBE_TDH(0));
@@ -300,9 +306,11 @@ void irq_work_queue_func(struct work_struct *wq)
 		//printk("tx head = %d tail = %d\n", hw->tx_desc_ring[0]->head, hw->tx_desc_ring[0]->tail);
 		//printk("rx head = %d tail = %d\n", hw->rx_desc_ring[0]->head, hw->rx_desc_ring[0]->tail);
 		if (hw->rx_desc_ring[0]->head == IXGBE_READ_REG(hw, IXGBE_RDT(0))) {
-			//printk("rx ring empty.\n");
+			printk("rx ring empty.\n");
+			spin_lock(&hw->rx_desc_ring[i]->lock);
 			hw->rx_desc_ring[0]->tail = (hw->rx_desc_ring[0]->head + hw->rx_desc_ring[0]->size / DESC_SIZE - 1) % (hw->rx_desc_ring[0]->size / DESC_SIZE);
 			IXGBE_WRITE_REG(hw, IXGBE_RDT(0), hw->rx_desc_ring[0]->tail);
+			spin_unlock(&hw->rx_desc_ring[i]->lock);
 		}
 
 		if (1 || (hw->statistic.rx_packets != 0 && hw->statistic.rx_packets) ||
@@ -536,7 +544,7 @@ int packet_transmit(struct ixgbe_hw *hw, void __user *buffer, int len)
 	tx_desc = hw->tx_desc_ring[free_queue]->tx_desc_ring;
 	//memcpy(tx_buffer_virt, buffer, len);
 	copy_from_user(tx_buffer_virt, buffer, len);
-	tx_desc[hw->tx_desc_ring[free_queue]->tail].read.cmd_type_len = (0x2b << 24) | (0x3 << 20) | len;
+	tx_desc[hw->tx_desc_ring[free_queue]->tail].read.cmd_type_len = (0x29 << 24) | (0x3 << 20) | len;
 	tx_desc[hw->tx_desc_ring[free_queue]->tail].read.olinfo_status = len << 14;
 	last_index = hw->tx_desc_ring[free_queue]->tail;
 	hw->tx_desc_ring[free_queue]->tail = (hw->tx_desc_ring[free_queue]->tail + 1) % (hw->tx_desc_ring[free_queue]->size / DESC_SIZE);
@@ -592,7 +600,7 @@ int packet_transmit_kern(struct ixgbe_hw *hw, void *buffer, int len)
 	tx_desc = hw->tx_desc_ring[free_queue]->tx_desc_ring;
 	memcpy(tx_buffer_virt, buffer, len);
 	//copy_from_user(tx_buffer_virt, buffer, len);
-	tx_desc[hw->tx_desc_ring[free_queue]->tail].read.cmd_type_len = (0x2b << 24) | (0x3 << 20) | len;
+	tx_desc[hw->tx_desc_ring[free_queue]->tail].read.cmd_type_len = (0x29 << 24) | (0x3 << 20) | len;
 	tx_desc[hw->tx_desc_ring[free_queue]->tail].read.olinfo_status = len << 14;
 	last_index = hw->tx_desc_ring[free_queue]->tail;
 	hw->tx_desc_ring[free_queue]->tail = (hw->tx_desc_ring[free_queue]->tail + 1) % (hw->tx_desc_ring[free_queue]->size / DESC_SIZE);
@@ -605,7 +613,7 @@ int packet_transmit_kern(struct ixgbe_hw *hw, void *buffer, int len)
 
 int packet_receive_kern(struct ixgbe_hw *hw, void *buffer, int *len)
 {
-	int i, j, k = 5;
+	int i, j, k = 1;
 	int free_queue = -1;
 	union ixgbe_adv_rx_desc *rx_desc;
 	int idx;

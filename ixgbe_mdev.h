@@ -89,7 +89,7 @@ struct ixgbe_mdev_state {
 
 struct packet_ctrl {
 	u32 type;
-	u32 reserved;
+	u32 checksum;
 	u64 packet_seq;
 	u64 size;
 };

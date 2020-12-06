@@ -66,6 +66,7 @@ void send_data(int fd, void *data, int len)
 	unsigned char *send_buffer = malloc(0x1000);
 	struct nic_payload_blk_data *nic_payload_data = (void *)send_buffer;
 	struct nic_payload_blk_status *nic_payload_status = (void *)send_buffer;
+	int delay = len > 4096 ? 1 : 0;
 
 	for (len_0 = 0; len_0 < len; len_0 += pkt_size) {
 		memcpy(nic_payload_data->buffer, data, pkt_size);
@@ -74,6 +75,8 @@ void send_data(int fd, void *data, int len)
 		nic_payload_data->pkt_ctrl.size = pkt_size;
 		write(fd, send_buffer, sizeof(*nic_payload_data));
 		data = (char *)data + pkt_size;
+		if (delay)
+			usleep(1000);
 	}
 	
 	nic_payload_status->pkt_ctrl.type = PKT_VIRTIO_BLK_STATUS;
