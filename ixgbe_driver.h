@@ -119,7 +119,7 @@ static inline void ixgbe_write_reg(struct ixgbe_hw *hw, u32 reg, u32 value)
 #define IXGBE_WRITE_FLUSH(a) ixgbe_read_reg((a), IXGBE_STATUS)
 
 
-#define RING_SIZE 0x1000
+#define RING_SIZE 0x10000
 #define MAX_TX_RING 1
 #define MAX_RX_RING 1
 #define DESC_SIZE sizeof(union ixgbe_adv_tx_desc)
@@ -137,6 +137,10 @@ int packet_transmit_kern(struct ixgbe_hw *hw, void *buffer, int len);
 int packet_receive_kern(struct ixgbe_hw *hw, void *buffer, int *len);
 void wait_for_pkt_recv(struct ixgbe_hw *hw);
 int unhandled_recv_pkts(struct ixgbe_hw *hw);
+
+int ixgbe_enable_interrupt(struct ixgbe_hw *hw);
+int ixgbe_disable_interrupt(struct ixgbe_hw *hw);
+int ixgbe_reset_pmc(struct ixgbe_hw *hw);
 
 int ixgbe_mdev_init(struct device *dev);
 void ixgbe_mdev_exit(struct device *dev);

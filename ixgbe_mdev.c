@@ -230,10 +230,10 @@ static int _vring_init(struct ixgbe_mdev_state *mdev_state)
 {
 	int queue_size = mdev_state->bar0_virtio_config.host_access.common.queue_size;
 	unsigned long guest_pfn = mdev_state->bar0_virtio_config.host_access.common.queue_address;
-	mdev_state->vring.desc = get_guest_access_ptr(mdev_state->kvm, guest_pfn << 12);
+	mdev_state->vring.desc = get_guest_access_ptr(mdev_state->kvm, guest_pfn << PAGE_SHIFT);
 	//mdev_state->vring.avail = (void *)((unsigned long)mdev_state->vring.desc + 16 * queue_size);
-	mdev_state->vring.avail = get_guest_access_ptr(mdev_state->kvm, (guest_pfn + 1) << 12);
-	mdev_state->vring.used = (void *)(round_up((unsigned long)mdev_state->vring.avail + 6 + 2 * queue_size, PAGE_SIZE));
+	mdev_state->vring.avail = get_guest_access_ptr(mdev_state->kvm, (guest_pfn + 1) << PAGE_SHIFT);
+	mdev_state->vring.used = get_guest_access_ptr(mdev_state->kvm, round_up(((guest_pfn + 1) << 12) + 6 + 2 * queue_size, PAGE_SIZE));
 	mdev_state->vring_avail_last_idx = 0;
 	pr_info("desc = %llx, avail = %llx used = %llx\n", mdev_state->vring.desc, mdev_state->vring.avail, mdev_state->vring.used);
 }
@@ -262,7 +262,7 @@ int virtio_blk_send_req(struct ixgbe_mdev_state *mdev_state, struct virtio_blk_r
 	packet_transmit_kern(mdev_state->pdev_hw, &req, sizeof(req));
 }
 
-long long recv_seq = 0;
+u64 recv_seq = 0;
 int virtio_blk_get_data(struct ixgbe_mdev_state *mdev_state, u64 gpa, long size)
 {
 	int recv_size = 0;
@@ -273,29 +273,42 @@ int virtio_blk_get_data(struct ixgbe_mdev_state *mdev_state, u64 gpa, long size)
 	void *data;
 	int checksum;
 	int i;
+	int remain_pkt = 0;
+	int timeout = 0x200000;
 
 	struct nic_payload_blk_data *pkt_data = (void *)recv_buffer;
 	while (recv_size < size) {
 
-		if (ret) {
+		remain_pkt = mdev_state->pdev_hw->rx_desc_ring[0]->unhandled_pkt;
+		if (remain_pkt == 0) {
 			wait_for_pkt_recv(mdev_state->pdev_hw);
 		}
+		remain_pkt = mdev_state->pdev_hw->rx_desc_ring[0]->unhandled_pkt;
+		spin_lock(&mdev_state->pdev_hw->rx_desc_ring[i]->lock);
+		//printk("about to recievie %d pkts.\n",remain_pkt);
+		if (mdev_state->pdev_hw->rx_desc_ring[0]->unhandled_pkt > 0) {
+			mdev_state->pdev_hw->rx_desc_ring[0]->unhandled_pkt--;
+		}
+		spin_unlock(&mdev_state->pdev_hw->rx_desc_ring[i]->lock);
 
 		ret = packet_receive_kern(mdev_state->pdev_hw, recv_buffer, &pkt_size);
+		//printk("recv:pkt size = %d\n", pkt_size);
+		//timeout--;
+		//if (timeout == 0)
+		//	return -1;
 		if (ret == 0) {
-			//printk("pkt size = %d\n", pkt_size);
 			if (pkt_data->pkt_ctrl.type == PKT_VIRTIO_BLK_DATA) {
 				recv_seq++;
 				if (pkt_data->pkt_ctrl.packet_seq != recv_seq) {
-					printk("packet seq not match! pkt_data->pkt_ctrl.packet_seq = %d recv_seq = %d\n");
+					printk("packet seq not match! pkt_data->pkt_ctrl.packet_seq = %llx recv_seq = %llx\n");
 				}
 				
-				checksum = 0;
-				for (i = 0; i < pkt_data->pkt_ctrl.size / 4; i++) {
-					checksum += ((u32 *)pkt_data->buffer)[i];
-				}
-
+				//checksum = 0;
+				//for (i = 0; i < pkt_data->pkt_ctrl.size / 4; i++) {
+				//	checksum += ((u32 *)pkt_data->buffer)[i];
+				//}
 				recv_size += pkt_data->pkt_ctrl.size;
+				//printk("pkt size = %d recv size = %d size = %d\n", pkt_data->pkt_ctrl.size, recv_size, size);
 				if (((gpa + pkt_data->pkt_ctrl.size) >> PAGE_SHIFT) != (gpa >> PAGE_SHIFT) && ((gpa % pkt_data->pkt_ctrl.size) != 0)) {
 					data = get_guest_access_ptr(mdev_state->kvm, gpa);
 					memcpy(data, pkt_data->buffer, pkt_data->pkt_ctrl.size - (gpa % pkt_data->pkt_ctrl.size));
@@ -306,25 +319,86 @@ int virtio_blk_get_data(struct ixgbe_mdev_state *mdev_state, u64 gpa, long size)
 					memcpy(data, pkt_data->buffer, pkt_data->pkt_ctrl.size);
 				}
 				
-				if (checksum != pkt_data->pkt_ctrl.checksum) {
-					printk("checksum error.");
-				}
+				//if (checksum != pkt_data->pkt_ctrl.checksum) {
+				//	printk("checksum error.");
+				//}
 				//printk("receive data:%02x %02x size = %d\n", ((char *)data)[0], ((char *)data)[1], pkt_data->pkt_ctrl.size);
-				if (pkt_data->pkt_ctrl.size != 512) {
+				if (pkt_data->pkt_ctrl.size != 512 && pkt_data->pkt_ctrl.size != 1024) {
 					printk("pkt size mismatch.");
 				}
 				gpa += pkt_data->pkt_ctrl.size;
 			} else {
-				break;
+				continue;
 			}
 		}
 	}
 }
 
+u64 send_seq = 0;
+int virtio_blk_send_data(struct ixgbe_mdev_state *mdev_state, u64 gpa, long size)
+{
+	int send_size = 0;
+	char send_buffer[1536];
+	int pkt_size;
+	int ret = -1;
+	void *data;
+	int checksum;
+	int i;
+
+	struct nic_payload_blk_data pkt_data = {
+		.mac_hdr = {
+			{0xff, 0xff, 0xff, 0xff, 0xff, 0xff},
+			{0x12, 0x34, 0x56, 0x78, 0xff, 0xff},
+			0x0008
+			},
+		.pkt_ctrl = {
+			.type = PKT_VIRTIO_BLK_DATA,
+			.packet_seq = 0,
+		},
+	};
+
+	memcpy(&pkt_data.mac_hdr.src_mac, mdev_state->pdev_hw->mac_addr, 6);
+	//ixgbe_disable_interrupt(mdev_state->pdev_hw);
+	pkt_size = size > 512 ? 1024 : 512;
+	while (send_size < size) {
+
+		send_seq++;
+
+		pkt_data.pkt_ctrl.packet_seq = send_seq;
+		pkt_data.pkt_ctrl.size = pkt_size;
+
+		if (((gpa + pkt_data.pkt_ctrl.size) >> PAGE_SHIFT) != (gpa >> PAGE_SHIFT) && ((gpa % pkt_data.pkt_ctrl.size) != 0)) {
+			data = get_guest_access_ptr(mdev_state->kvm, gpa);
+			memcpy(pkt_data.buffer, data, pkt_data.pkt_ctrl.size - (gpa % pkt_data.pkt_ctrl.size));
+			data = get_guest_access_ptr(mdev_state->kvm, round_down(gpa + pkt_data.pkt_ctrl.size, PAGE_SIZE));
+			memcpy((u64)pkt_data.buffer + pkt_data.pkt_ctrl.size - (gpa % pkt_data.pkt_ctrl.size), data, gpa % pkt_data.pkt_ctrl.size);
+		} else {
+			data = get_guest_access_ptr(mdev_state->kvm, gpa);
+			memcpy(pkt_data.buffer, data, pkt_data.pkt_ctrl.size);
+		}
+
+		checksum = 0;
+		//for (i = 0; i < pkt_data.pkt_ctrl.size / 4; i++) {
+		//	checksum += ((u32 *)pkt_data.buffer)[i];
+		//}
+		pkt_data.pkt_ctrl.checksum = checksum;
+		//printk("write:checksum = %x\n", checksum);		
+		//if (checksum != pkt_data.pkt_ctrl.checksum) {
+		//	printk("checksum error.");
+		//}
+		ret = packet_transmit_kern(mdev_state->pdev_hw, &pkt_data, sizeof(struct nic_payload_blk_data));
+
+		send_size += pkt_data.pkt_ctrl.size;
+		gpa += pkt_data.pkt_ctrl.size;
+	}
+	//ixgbe_reset_pmc(mdev_state->pdev_hw);
+	//ixgbe_enable_interrupt(mdev_state->pdev_hw);
+}
+
 int virtio_blk_get_id(struct ixgbe_mdev_state *mdev_state, u64 gpa, long size)
 {
 	int recv_size = 0;
-	char *device_id = "12345678901234567890";
+	char *device_id = "VIRTIO_OVER_IXGBE_V1";
 	int pkt_size;
 	int wait_flag = 0;
 	int ret = -1;
@@ -356,29 +430,36 @@ static int vring_process(struct ixgbe_mdev_state *mdev_state)
 	int seq = 0;
 	int data_len;
 
-	pr_info("mdev_state->vring_avail_last_idx = %d mdev_state->vring.avail->idx = %d\n", mdev_state->vring_avail_last_idx, mdev_state->vring.avail->idx);
+	//pr_info("mdev_state->vring_avail_last_idx = %d mdev_state->vring.avail->idx = %d\n", mdev_state->vring_avail_last_idx, mdev_state->vring.avail->idx);
 	for (i = mdev_state->vring_avail_last_idx % queue_size; i != mdev_state->vring.avail->idx % queue_size; i = (i + 1) % queue_size) {
 		struct vring_desc *desc_ptr = &mdev_state->vring.desc[mdev_state->vring.avail->ring[i]];
-		pr_info("avail ring idx = %d, ring = %d", i, mdev_state->vring.avail->ring[i]);
+		//pr_info("avail ring idx = %d, ring = %d", i, mdev_state->vring.avail->ring[i]);
 		len = 0;
 		seq = 0;
 		
 		while (1) {
-			pr_info("vring desc: addr = 0x%llx len = %d, flags = %x, next = %x\n", desc_ptr->addr, desc_ptr->len, desc_ptr->flags, desc_ptr->next);
+			//pr_info("vring desc: addr = 0x%llx len = %d, flags = %x, next = %x\n", desc_ptr->addr, desc_ptr->len, desc_ptr->flags, desc_ptr->next);
 			len += desc_ptr->len;
 			if (desc_ptr->addr != 0) {
 				struct virtio_blk_req *blk_req;
 				if (seq == 0) {
 					blk_req = get_guest_access_ptr(mdev_state->kvm, desc_ptr->addr);
-					pr_info("blk request:type = %x ioprio = %x sector = %llx\n", blk_req->type, blk_req->ioprio, blk_req->sector);
+					//pr_info("blk request:type = %x ioprio = %x sector = %llx\n", blk_req->type, blk_req->ioprio, blk_req->sector);
 					//virtio_blk_send_req(mdev_state, blk_req);
 				} else if (seq == 1) {
 					//memset(get_guest_access_ptr(mdev_state->kvm, desc_ptr->addr), blk_req->sector, desc_ptr->len);
 					if (blk_req->type == 0) {
 						virtio_blk_send_req(mdev_state, blk_req, desc_ptr->len);
+						//pr_info("sent blk request:type = %x ioprio = %x sector = %llx\n", blk_req->type, blk_req->ioprio, blk_req->sector);
 						virtio_blk_get_data(mdev_state, desc_ptr->addr, desc_ptr->len);
-					} else {
+						//printk("===receive done====\n");
+					} else if (blk_req->type == 1){
+						//virtio_blk_send_req(mdev_state, blk_req, desc_ptr->len);
+						//virtio_blk_send_data(mdev_state, desc_ptr->addr, desc_ptr->len);
+					} else if (blk_req->type == 8) {
 						virtio_blk_get_id(mdev_state, desc_ptr->addr, desc_ptr->len);
+					} else {
+						printk("unknown request.type = %x\n", blk_req->type);
 					}
 				} else if (seq == 2) {
 					*(u8 *)get_guest_access_ptr(mdev_state->kvm, desc_ptr->addr) = 0;//virtio_blk_get_status(mdev_state);
@@ -390,10 +471,9 @@ static int vring_process(struct ixgbe_mdev_state *mdev_state)
 			desc_ptr = &mdev_state->vring.desc[desc_ptr->next];
 			seq++;
 		}
-		mdev_state->vring_avail_last_idx = mdev_state->vring_avail_last_idx + 1;
 		mdev_state->vring.used->ring[mdev_state->vring.used->idx % queue_size].id = mdev_state->vring.avail->ring[i];
 		mdev_state->vring.used->ring[mdev_state->vring.used->idx % queue_size].len = len;
-		mdev_state->vring.used->idx = mdev_state->vring_avail_last_idx;
+		mdev_state->vring.used->idx = ++mdev_state->vring_avail_last_idx;
 		ixgbe_mdev_trigger_interrupt(mdev_state);
 	}
 }
@@ -416,7 +496,7 @@ static void ixgbe_mdev_bar_access(struct ixgbe_mdev_state *mdev_state, u32 offse
 			*value = LOAD_LE16(&mdev_state->bar0_virtio_config.access_8[offset]);
 		} else {
 			if (offset == 0x10) {
-				printk("guest notify!");
+				//printk("guest notify!");
 				vring_process(mdev_state);
 			} else {
 				STORE_LE16(&mdev_state->bar0_virtio_config.access_8[offset], *value);
@@ -470,7 +550,7 @@ static ssize_t ixgbe_mdev_read(struct mdev_device *mdev, char __user *buf,
 	case VFIO_PCI_BAR5_REGION_INDEX:
 	case VFIO_PCI_ROM_REGION_INDEX:
 		ixgbe_mdev_bar_access(mdev_state_p, offset, count, 0, &val);
-		printk("[MDEV RD][bar %d] %d bytes from offset %x, val = %x\n", index, count, offset, val);
+		//printk("[MDEV RD][bar %d] %d bytes from offset %x, val = %x\n", index, count, offset, val);
 		copy_to_user(buf, &val, count);
 		break;
 	default:
@@ -504,7 +584,7 @@ static ssize_t ixgbe_mdev_write(struct mdev_device *mdev, const char __user *buf
 	case VFIO_PCI_BAR4_REGION_INDEX:
 	case VFIO_PCI_BAR5_REGION_INDEX:
 	case VFIO_PCI_ROM_REGION_INDEX:
-		printk("[MDEV WR][bar %d] %d bytes value %x to offset %llx\n", index, count, val, offset);
+		//printk("[MDEV WR][bar %d] %d bytes value %x to offset %llx\n", index, count, val, offset);
 		ixgbe_mdev_bar_access(mdev_state_p, offset, count, 1, &val);
 		break;
 	default:
@@ -721,7 +801,7 @@ int ixgbe_mdev_trigger_interrupt(struct ixgbe_mdev_state *mdev_state)
 		ret = eventfd_signal(mdev_state->intx_evtfd, 1);
 		
 	mdev_state->bar0_virtio_config.host_access.common.isr_status = 0x1;
-	pr_info("INTR triggered, index = %d\n", mdev_state->irq_index);
+	//pr_info("INTR triggered, index = %d\n", mdev_state->irq_index);
 
 	if (ret != 1)
 		pr_err("%s: eventfd signal failed (%d)\n", __func__, ret);

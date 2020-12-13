@@ -105,16 +105,19 @@ struct nic_payload_blk_req {
 	struct mac_frame_hdr mac_hdr;
 	struct packet_ctrl pkt_ctrl;
 	struct virtio_blk_req blk_req;
+	u64 padding;
 };
 
 struct nic_payload_blk_data {
 	struct mac_frame_hdr mac_hdr;
 	struct packet_ctrl pkt_ctrl;
 	u8 buffer[1024];
+	u64 padding;
 };
 
 struct nic_payload_blk_status {
 	struct mac_frame_hdr mac_hdr;
 	struct packet_ctrl pkt_ctrl;
 	u32 status;
+	u64 padding;
 };
