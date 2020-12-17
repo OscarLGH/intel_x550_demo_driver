@@ -65,50 +65,6 @@ struct nic_payload_blk_status {
 
 u64 seq = 0;
 
-int send_data(int fd, void *data, int len)
-{
-	int pkt_size = 1024;
-	int len_0 = 0;
-	int remain_size;
-	int i;
-	int checksum;
-	unsigned char *send_buffer = malloc(0x1000);
-	u64 ret;
-	struct nic_payload_blk_data *nic_payload_data = (void *)send_buffer;
-	struct nic_payload_blk_status *nic_payload_status = (void *)send_buffer;
-
-	pkt_size = len > 512 ? 1024 : 512;
-	for (len_0 = 0; len_0 < len; len_0 += pkt_size) {
-		memcpy(nic_payload_data->buffer, data, pkt_size);
-		//memset(nic_payload_data->buffer, 0x1, pkt_size);
-		checksum = 0;
-		//for (i = 0; i < pkt_size / 4; i++) {
-		//	checksum += ((u32*)data)[i];
-		//}
-		nic_payload_data->mac_hdr.type = 0x0008;
-		nic_payload_data->pkt_ctrl.type = PKT_VIRTIO_BLK_DATA;
-		nic_payload_data->pkt_ctrl.size = pkt_size;
-		nic_payload_data->pkt_ctrl.checksum = checksum;
-		nic_payload_data->pkt_ctrl.packet_seq = ++seq;
-		//printf("write size:%d\n", sizeof(*nic_payload_data));
-		ret = write(fd, send_buffer, sizeof(*nic_payload_data));
-		if (ret == -1) {
-			return -1;
-		}
-		//usleep(1000);
-		//pkt_size = (len - len_0) > 1024 ? 512 : 512;
-		data = (char *)data + pkt_size;
-	}
-	
-	nic_payload_status->pkt_ctrl.type = PKT_VIRTIO_BLK_STATUS;
-	nic_payload_status->status = 0;
-	free(send_buffer);
-	//ret = write(fd, send_buffer, sizeof(*nic_payload_status));
-	//if (ret == -1)
-	//	return -1;
-	return 0;
-}
-
 int recv_data(int fd, void *data, int len)
 {
 	int pkt_size = 1024;
@@ -171,19 +127,30 @@ int read_file_send_data(int net_fd, int data_fd, u64 sector, u64 len)
 	int ret;
 	send_size = 0;
 	pkt_size = len > 512 ? 1024 : 512;
+	struct nic_payload_blk_data *nic_payload_data = (void *)data_buffer;
+	struct nic_payload_blk_status *nic_payload_status = (void *)data_buffer;
+
 	while (send_size < len) {
 		ret = lseek(data_fd, (sector + send_size / 512) * 512, SEEK_SET);
 		if (ret == -1) {
 			printf("lseek error.offset = %x ret = %d\n", (sector + send_size / 512) * 512, ret);
 			return -1;
 		}
-		ret = read(data_fd, data_buffer, pkt_size);
+		ret = read(data_fd, nic_payload_data->buffer, pkt_size);
 		if (ret < 0) {
 			printf("read file error.\n");
 			return ret;
 		}
+		nic_payload_data->mac_hdr.type = 0x0008;
+		nic_payload_data->pkt_ctrl.type = PKT_VIRTIO_BLK_DATA;
+		nic_payload_data->pkt_ctrl.size = pkt_size;
+		nic_payload_data->pkt_ctrl.checksum = 0;
+		nic_payload_data->pkt_ctrl.packet_seq = ++seq;
 		//printf("sending data offset %llx\n", send_size);
-		ret = send_data(net_fd, data_buffer, pkt_size);
+		ret = write(net_fd, data_buffer, sizeof(*nic_payload_data));
+		if (ret == -1) {
+			return -1;
+		}
 		send_size += pkt_size;
 		//pkt_size = (len - send_size) > 1024 ? 512 : 512;
 	}
@@ -199,11 +166,23 @@ int recv_data_write_file(int net_fd, int data_fd, u64 sector, u64 len)
 	int ret;
 	recv_size = 0;
 	pkt_size = len > 512 ? 1024 : 512;
+	struct nic_payload_blk_data *nic_payload_data = (void *)data_buffer;
+	struct nic_payload_blk_status *nic_payload_status = (void *)data_buffer;
+
 	while (recv_size < len) {
-		ret = recv_data(net_fd, data_buffer, pkt_size);
+		ret = read(net_fd, data_buffer, sizeof(*nic_payload_data));
 		if (ret == -1) {
 			printf("recv error.offset = %x ret = %d\n", (sector + recv_size / 512) * 512, ret);
 			return -1;
+		}
+		
+		if (nic_payload_data->pkt_ctrl.size != 0 && nic_payload_data->pkt_ctrl.type != PKT_VIRTIO_BLK_DATA) {
+			printf("recv type error.%d \n", nic_payload_data->pkt_ctrl.type);
+			continue;
+		}
+		if (nic_payload_data->pkt_ctrl.size == 0) {
+			printf("unexcepted packet received.\n");
+			break;
 		}
 
 		ret = lseek(data_fd, (sector + recv_size / 512) * 512, SEEK_SET);
@@ -212,13 +191,7 @@ int recv_data_write_file(int net_fd, int data_fd, u64 sector, u64 len)
 			return -1;
 		}
 		
-		printf("writing offset %llx...(%02x %02x %02x %02x)\n", (sector + recv_size / 512) * 512,
-			data_buffer[0],
-			data_buffer[1],
-			data_buffer[2],
-			data_buffer[3]
-			);
-		//ret = write(data_fd, data_buffer, pkt_size);
+		//ret = write(data_fd, nic_payload_data->buffer, pkt_size);
 		//if (ret < 0) {
 		//	printf("write file error.\n");
 		//	return ret;
