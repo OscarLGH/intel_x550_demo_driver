@@ -274,16 +274,21 @@ int virtio_blk_get_data(struct ixgbe_mdev_state *mdev_state, u64 gpa, long size)
 	int checksum;
 	int i;
 	int remain_pkt = 0;
-	int timeout = 0x200000;
+	int timeout = 1000000;
+	unsigned long time_ret;
 
 	struct nic_payload_blk_data *pkt_data = (void *)recv_buffer;
 	while (recv_size < size) {
+		pkt_data->pkt_ctrl.type = 0;
+		pkt_data->pkt_ctrl.size = 0;
 
 		remain_pkt = mdev_state->pdev_hw->rx_desc_ring[0]->unhandled_pkt;
 		if (remain_pkt == 0) {
-			wait_for_pkt_recv(mdev_state->pdev_hw);
+			time_ret = wait_for_pkt_recv(mdev_state->pdev_hw, timeout);
+			if (time_ret == 0)
+				return -EINVAL;
 		}
-		remain_pkt = mdev_state->pdev_hw->rx_desc_ring[0]->unhandled_pkt;
+		//remain_pkt = mdev_state->pdev_hw->rx_desc_ring[0]->unhandled_pkt;
 		spin_lock(&mdev_state->pdev_hw->rx_desc_ring[i]->lock);
 		//printk("about to recievie %d pkts.\n",remain_pkt);
 		if (mdev_state->pdev_hw->rx_desc_ring[0]->unhandled_pkt > 0) {
@@ -328,10 +333,15 @@ int virtio_blk_get_data(struct ixgbe_mdev_state *mdev_state, u64 gpa, long size)
 				}
 				gpa += pkt_data->pkt_ctrl.size;
 			} else {
-				continue;
+				printk("invalid data");
+				return -EINVAL;
 			}
+		} else {
+			//printk("ret = %d\n", ret);
+			//return -EINVAL;
 		}
 	}
+	return 0;
 }
 
 u64 send_seq = 0;
@@ -429,6 +439,8 @@ static int vring_process(struct ixgbe_mdev_state *mdev_state)
 	int queue_size = mdev_state->bar0_virtio_config.host_access.common.queue_size;
 	int seq = 0;
 	int data_len;
+	int retry = 5;
+	int ret;
 
 	//pr_info("mdev_state->vring_avail_last_idx = %d mdev_state->vring.avail->idx = %d\n", mdev_state->vring_avail_last_idx, mdev_state->vring.avail->idx);
 	for (i = mdev_state->vring_avail_last_idx % queue_size; i != mdev_state->vring.avail->idx % queue_size; i = (i + 1) % queue_size) {
@@ -449,13 +461,19 @@ static int vring_process(struct ixgbe_mdev_state *mdev_state)
 				} else if (seq == 1) {
 					//memset(get_guest_access_ptr(mdev_state->kvm, desc_ptr->addr), blk_req->sector, desc_ptr->len);
 					if (blk_req->type == 0) {
-						virtio_blk_send_req(mdev_state, blk_req, desc_ptr->len);
-						//pr_info("sent blk request:type = %x ioprio = %x sector = %llx\n", blk_req->type, blk_req->ioprio, blk_req->sector);
-						virtio_blk_get_data(mdev_state, desc_ptr->addr, desc_ptr->len);
-						//printk("===receive done====\n");
-					} else if (blk_req->type == 1){
-						//virtio_blk_send_req(mdev_state, blk_req, desc_ptr->len);
-						//virtio_blk_send_data(mdev_state, desc_ptr->addr, desc_ptr->len);
+						while (retry--) {
+							ret = virtio_blk_send_req(mdev_state, blk_req, desc_ptr->len);
+							//pr_info("sent blk request:type = %x ioprio = %x sector = %llx\n", blk_req->type, blk_req->ioprio, blk_req->sector);
+							ret = virtio_blk_get_data(mdev_state, desc_ptr->addr, desc_ptr->len);
+							if (ret == 0)
+								break;
+							printk("===timeout. retry====\n");
+						}
+					} else if (blk_req->type == 1) {
+						while (retry--) {
+							//virtio_blk_send_req(mdev_state, blk_req, desc_ptr->len);
+							//virtio_blk_send_data(mdev_state, desc_ptr->addr, desc_ptr->len);
+						}
 					} else if (blk_req->type == 8) {
 						virtio_blk_get_id(mdev_state, desc_ptr->addr, desc_ptr->len);
 					} else {

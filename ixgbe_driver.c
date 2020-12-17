@@ -311,27 +311,22 @@ void irq_work_queue_func(struct work_struct *wq)
 		//hw->rx_desc_ring[0]->tail = IXGBE_READ_REG(hw, IXGBE_RDT(0));
 		//printk("[%s]tx head = %d tail = %d\n", mac_string, hw->tx_desc_ring[0]->head, hw->tx_desc_ring[0]->tail);
 		//printk("[%s]rx head = %d tail = %d\n", mac_string, hw->rx_desc_ring[0]->head, hw->rx_desc_ring[0]->tail);
-		if (hw->rx_desc_ring[0]->head == IXGBE_READ_REG(hw, IXGBE_RDT(0))) {
+		if (IXGBE_READ_REG(hw, IXGBE_RDT(0)) - hw->rx_desc_ring[0]->head <= 64) {
 			//printk("rx ring empty.\n");
 			//spin_lock(&hw->rx_desc_ring[i]->lock);
 			hw->rx_desc_ring[0]->tail = (hw->rx_desc_ring[0]->head + hw->rx_desc_ring[0]->size / DESC_SIZE - 1) % (hw->rx_desc_ring[0]->size / DESC_SIZE);
 			IXGBE_WRITE_REG(hw, IXGBE_RDT(0), hw->rx_desc_ring[0]->tail);
 			//spin_unlock(&hw->rx_desc_ring[i]->lock);
 		}
-
-		if (1 || (hw->statistic.rx_packets != 0 && hw->statistic.rx_packets) ||
-			(hw->statistic.tx_packets != 0 && hw->statistic.tx_packets % 128 == 0)
-			) {
-			/*
-			printk("[%s] RX packets:%d (%d bytes) TX packets:%d (%d bytes)\n",
-				mac_string,
-				hw->statistic.rx_packets,
-				hw->statistic.rx_bytes,
-				hw->statistic.tx_packets,
-				hw->statistic.tx_bytes
-			);
-			*/
-		}
+		/*
+		printk("[%s] RX packets:%d (%d bytes) TX packets:%d (%d bytes)\n",
+			mac_string,
+			hw->statistic.rx_packets,
+			hw->statistic.rx_bytes,
+			hw->statistic.tx_packets,
+			hw->statistic.tx_bytes
+		);
+		*/
 	}
 }
 
@@ -616,12 +611,13 @@ int packet_receive_kern(struct ixgbe_hw *hw, void *buffer, int *len)
 	int i, j;
 	union ixgbe_adv_rx_desc *rx_desc;
 	int idx;
-	int timeout = 0x200000;
+	long timeout = 0x1000000;
 
 	for (i = 0; i < MAX_RX_RING; i++) {
 		idx = hw->rx_desc_ring[i]->last_head;
 		//printk("waiting for pkt arrive...\n");
 		while (1) {
+			barrier();
 			timeout--;
 			if (hw->rx_desc_ring[i]->rx_desc_ring[idx].wb.upper.status_error & IXGBE_ADVTXD_STAT_DD)
 				break;
@@ -642,10 +638,12 @@ int packet_receive_kern(struct ixgbe_hw *hw, void *buffer, int *len)
 	return 0;
 }
 
-void wait_for_pkt_recv(struct ixgbe_hw *hw)
+unsigned long wait_for_pkt_recv(struct ixgbe_hw *hw, unsigned long timeout)
 {
-	wait_for_completion(&hw->rx_desc_ring[0]->completion);
-	init_completion(&hw->rx_desc_ring[0]->completion);	
+	unsigned long ret;
+	ret = wait_for_completion_timeout(&hw->rx_desc_ring[0]->completion, timeout);
+	init_completion(&hw->rx_desc_ring[0]->completion);
+	return ret;	
 }
 
 int unhandled_recv_pkts(struct ixgbe_hw *hw)

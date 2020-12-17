@@ -96,7 +96,7 @@ int send_data(int fd, void *data, int len)
 			return -1;
 		}
 		//usleep(1000);
-		pkt_size = (len - len_0) > 512 ? 1024 : 512;
+		//pkt_size = (len - len_0) > 1024 ? 512 : 512;
 		data = (char *)data + pkt_size;
 	}
 	
@@ -120,7 +120,6 @@ int recv_data(int fd, void *data, int len)
 	u64 ret;
 	struct nic_payload_blk_data *nic_payload_data = (void *)recv_buffer;
 	struct nic_payload_blk_status *nic_payload_status = (void *)recv_buffer;
-	int delay = len > 4096 ? 1 : 0;
 
 	pkt_size = 0;
 	for (len_0 = 0; len_0 < len; len_0 += pkt_size) {
@@ -186,7 +185,7 @@ int read_file_send_data(int net_fd, int data_fd, u64 sector, u64 len)
 		//printf("sending data offset %llx\n", send_size);
 		ret = send_data(net_fd, data_buffer, pkt_size);
 		send_size += pkt_size;
-		pkt_size = (len - send_size) > 512 ? 1024 : 512;
+		//pkt_size = (len - send_size) > 1024 ? 512 : 512;
 	}
 	free(data_buffer);
 	return 0;
@@ -199,7 +198,7 @@ int recv_data_write_file(int net_fd, int data_fd, u64 sector, u64 len)
 	char *data_buffer = malloc(0x1000);
 	int ret;
 	recv_size = 0;
-	pkt_size = len > 512 ? 512 : 512;
+	pkt_size = len > 512 ? 1024 : 512;
 	while (recv_size < len) {
 		ret = recv_data(net_fd, data_buffer, pkt_size);
 		if (ret == -1) {
@@ -225,7 +224,7 @@ int recv_data_write_file(int net_fd, int data_fd, u64 sector, u64 len)
 		//	return ret;
 		//}
 		recv_size += pkt_size;
-		pkt_size = (len - recv_size) > 512 ? 512 : 512;
+		pkt_size = (len - recv_size) > 512 ? 1024 : 512;
 	}
 	free(data_buffer);
 	return 0;
@@ -273,7 +272,7 @@ int main(int argc, char **argv)
 	while (1) {
 		//cnt = 0;
 		ret = read(efd, &event, sizeof(long));
-		//printf("event = %d ", event);
+		//printf("event = %d\n", event);
 		while (event--) {
 			memset(recv_buffer, 0x0, 0x1000);
 			memset(data_buffer, 0x0, 0x1000);
@@ -282,7 +281,7 @@ int main(int argc, char **argv)
 			cnt++;
 			
 			if (nic_payload_ptr->pkt_ctrl.type == PKT_VIRTIO_BLK_REQ) {
-			/*
+				/*
 				printf("(%d) src:[%02x:%02x:%02x:%02x:%02x:%02x] blk request:type = %x sector = %x ioprio = %d size = %d\n",
 					cnt,
 					nic_payload_ptr->mac_hdr.src_mac[0],

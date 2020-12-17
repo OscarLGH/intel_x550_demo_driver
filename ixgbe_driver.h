@@ -135,7 +135,7 @@ int packet_transmit(struct ixgbe_hw *hw, void __user *buffer, int len);
 int packet_receive(struct ixgbe_hw *hw, void __user *buffer, int *len);
 int packet_transmit_kern(struct ixgbe_hw *hw, void *buffer, int len);
 int packet_receive_kern(struct ixgbe_hw *hw, void *buffer, int *len);
-void wait_for_pkt_recv(struct ixgbe_hw *hw);
+unsigned long wait_for_pkt_recv(struct ixgbe_hw *hw, unsigned long timeout);
 int unhandled_recv_pkts(struct ixgbe_hw *hw);
 
 int ixgbe_enable_interrupt(struct ixgbe_hw *hw);
